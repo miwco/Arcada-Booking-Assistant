@@ -4,11 +4,10 @@
 Produces a single BookingAssistant.exe that starts the local server and opens the
 dashboard — no Python install needed on the target machine.
 
-SAFETY: only NON-personal files are bundled — the generic config.example/, the
-committed course CSVs, and the anonymised _info_example/ dummy data. The real
-_info/ and the real config/teacher_*.csv / workload_targets.json are NEVER bundled
-(they are not listed below). When the .exe runs, it reads any real data the user
-places in an _info/ folder next to the .exe and writes output/ and export/ there.
+SAFETY: only the generic config.example/ and the settings template are bundled — no
+real or example-specific data. A fresh .exe starts empty; the user imports their own
+teachers/courses/groups and booking files, and writes output/ and export/ next to
+the .exe.
 """
 import os
 
@@ -26,13 +25,11 @@ def tree(rel):
 
 
 datas = [
-    # non-personal config (course data + the settings template)
-    ("config/course_master.csv", "config"),
-    ("config/course_code_fixes.csv", "config"),
-    ("config/settings.example.json", "config"),
+    ("config/settings.example.json", "config"),     # generic settings template (no data)
 ]
-datas += tree("config.example")     # generic "Teacher A" config
-datas += tree("_info_example")      # anonymised dummy booking data
+datas += tree("config.example")     # generic, non-personal starter config (Example Teacher/Course)
+# No real or example-specific booking data is bundled. A fresh app starts empty and
+# the user imports their own teachers/courses/groups and booking files.
 
 hiddenimports = [
     "serve", "build", "openpyxl",

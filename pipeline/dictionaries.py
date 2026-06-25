@@ -53,11 +53,10 @@ def cfg_path(name):
 
 
 def data_dir():
-    """Where the source booking data lives. Defaults to ./_info but can be pointed
-    elsewhere (so other programmes can use the app without touching code) via the
-    BA_DATA_DIR env var or config/settings.json {"data_dir": "..."}. Relative paths
-    resolve against the writable app dir. If no real _info is present, the bundled
-    dummy data (_info_example) is used — so a public clone / fresh .exe runs."""
+    """Where the source booking data lives. The app reads/writes a `data/` folder
+    next to itself; power users / developers can also use `_info/`. Override with the
+    BA_DATA_DIR env var or config/settings.json {"data_dir": "..."}; relative paths
+    resolve against the app dir. A fresh app starts with an empty data/ folder."""
     p = os.environ.get("BA_DATA_DIR")
     if not p:
         for cfg in (os.path.join(APP_DIR, "config", "settings.json"),
@@ -70,15 +69,11 @@ def data_dir():
                     p = None
                 break
     if not p:
-        # prefer a real data folder next to the app: _info (dev / power users) or the
-        # stable data/ folder the installed app seeds. Only counts if it actually holds
-        # booking workbooks, so an empty folder never hides the demo data.
-        for cand in ("_info", "data"):
+        for cand in ("_info", "data"):       # prefer one that actually holds workbooks
             full = os.path.join(APP_DIR, cand)
             if os.path.isdir(os.path.join(full, "bokningsönskemålen_2026_2027")):
                 return full
-        dummy = os.path.join(BUNDLE, "_info_example")
-        return dummy if os.path.isdir(dummy) else os.path.join(APP_DIR, "data")
+        return os.path.join(APP_DIR, "data")
     return p if os.path.isabs(p) else os.path.join(APP_DIR, p)
 
 

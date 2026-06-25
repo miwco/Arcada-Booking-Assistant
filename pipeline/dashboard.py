@@ -182,12 +182,14 @@ TEMPLATE = r"""<!DOCTYPE html>
   .savebar{position:sticky;bottom:0;background:var(--bg);padding:10px 0;border-top:1px solid var(--line);margin-top:10px;display:flex;gap:8px;align-items:center}
   a.tmpl{display:inline-block;padding:6px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--txt);text-decoration:none;font-size:13px}
   a.tmpl:hover{border-color:var(--accent)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  #aiResolveBtn:not(:disabled){border-color:var(--accent)}
   #toast.ok{background:#0f3a2c;border:1px solid var(--ok);color:#d6fbee}
 </style>
 </head>
 <body>
 <header>
-  <h1>📅 Booking Assistant <span class="muted" style="font-weight:400">· Film &amp; Media · 2026–2027</span></h1>
+  <h1>📅 Arcada Booking Assistant</h1>
   <div class="tabs">
     <div class="tab active" data-view="home">🏠 Home</div>
     <div class="tab" data-view="import">📥 Import</div>
@@ -201,7 +203,8 @@ TEMPLATE = r"""<!DOCTYPE html>
   <div class="controls" id="controls">
     <button id="undoBtn" title="Undo (Ctrl+Z)">↶ Undo</button>
     <button id="resetBtn" title="Reset all changes to the original import">↺ Reset</button>
-    <button id="resolveBtn" title="Try to auto-resolve all conflicts by moving lectures">🪄 Resolve all</button>
+    <button id="aiResolveBtn" title="Use the AI to resolve conflicts (needs an API key — set one in Manage → Settings)">🤖 Resolve all (AI)</button>
+    <button id="resolveBtn" title="Resolve conflicts with the built-in rules — no AI needed">⚙ Solve all without AI</button>
     <button id="exportBtn" class="primary" title="Export the batch chosen in the semester selector (autumn / spring / both) to Excel">⬇ Export Excel</button>
     <select id="semester"><option value="">All semesters</option>
       <option value="autumn 2026">Autumn 2026</option><option value="spring 2027">Spring 2027</option></select>
@@ -415,6 +418,7 @@ function render(){
   MODEL=buildModel(); OCC=buildOcc(MODEL); computeConflicts(MODEL,OCC);
   renderLegend(); renderFilters(); refreshUndo();
   const ctl=$("#controls"); if(ctl) ctl.style.display=(view==="home"||view==="manage"||view==="import")?"none":"flex";
+  updateSolverButtons();
   if(view==="home") renderHome();
   else if(view==="manage") renderManage();
   else if(view==="import") renderImport();
@@ -673,6 +677,55 @@ function remainingConflicts(){
   for(const e of evs){const k=e.course_code+e.cohort+e.placed_date+e.slot; if(!seen.has(k)){seen.add(k);out.push(e);}}
   return out;
 }
+function updateSolverButtons(){const b=$("#aiResolveBtn"); if(!b)return;
+  b.disabled=!AI.available;
+  b.title=AI.available?"Use the AI to resolve conflicts (model + rules from Manage → Settings)"
+    :"Add an AI API key in Manage → Settings to enable the AI solver";}
+/* AI-powered resolve-all: ask the AI to choose among the LEGAL options for each
+   conflict (move to its pick, or approve if your house rules allow it). */
+async function aiResolveAll(){
+  if(!AI.available){toast("Add an AI API key in Manage → Settings first.","warn");return;}
+  const conf=remainingConflicts();
+  if(!conf.length){toast("No conflicts to resolve.","ok");return;}
+  const MAX=50, n=Math.min(conf.length,MAX);
+  exportModal(`<h3>🤖 Resolve with AI</h3>`+
+    `<div class="row">The AI will look at <b>${n}</b> conflict${n>1?"s":""} and, for each, pick the best legal slot (or keep it if your rules allow). It uses your chosen model and custom instructions from Settings.</div>`+
+    `<div class="row muted">This makes up to ${n} AI requests and stops at your spending cap. You approve nothing is exported automatically.</div>`+
+    `<div class="act"><button class="primary" onclick="closePopup();aiResolveRun()">Start</button><button onclick="closePopup()">Cancel</button></div>`);
+}
+async function aiResolveRun(){
+  pushUndo();
+  let solved=0,moved=0,approved=0,asked=0; const MAX=50;
+  toast("🤖 AI is resolving conflicts…","ok");
+  for(let guard=0;guard<MAX;guard++){
+    MODEL=buildModel();OCC=buildOcc(MODEL);computeConflicts(MODEL,OCC);
+    const conf=remainingConflicts(); if(!conf.length) break;
+    const e=conf[0]; const cands=aiCandidates(e);
+    if(!cands.length){ [e,...involved(e)].forEach(p=>ovGet("approved")[p.id]=true); approved++; solved++; save(); continue; }
+    asked++;
+    let j; try{
+      j=await (await fetch("/ai/suggest",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+        booking:{course:e.course,code:e.course_code,cohort:e.cohort,teachers:e.teachers,examiner:e.examiner,
+          groups:e.groups,week:e.week,day:e.wd,slot:e.slot,room:e.room,requested_time:e.time_range||"",
+          hard_time:!!e.hard_time,comment:e.comments||""},conflicts:e.kinds||[],candidates:cands})})).json();
+    }catch(err){ toast("AI request failed — stopping.","warn"); break; }
+    if(j.error==="cap_exceeded"){ toast("AI spending cap reached — stopping.","warn"); break; }
+    if(j.error==="no_key"){ toast("No AI key — stopping.","warn"); break; }
+    if(!j.ok){ // can't get a suggestion; approve to make progress
+      [e,...involved(e)].forEach(p=>ovGet("approved")[p.id]=true); approved++; solved++; save(); continue; }
+    if(j.action==="approve"||j.recommend_index<0||!cands[j.recommend_index]){
+      [e,...involved(e)].forEach(p=>ovGet("approved")[p.id]=true); approved++;
+    }else{ const c=cands[j.recommend_index]; ovGet("moved")[e.id]={week:c.week,weekday:c.wd,slot:c.slot}; moved++; }
+    solved++; save();
+  }
+  MODEL=buildModel();OCC=buildOcc(MODEL);computeConflicts(MODEL,OCC); render();
+  try{ AI=await (await fetch("/ai/status")).json(); }catch(e){} updateSolverButtons();
+  const rem=remainingConflicts();
+  exportModal(`<h3>🤖 AI resolve — done</h3>`+
+    `<div class="row">Resolved <b>${solved}</b> conflict(s): ${moved} moved, ${approved} kept (allowed). ${asked} AI request(s).</div>`+
+    (rem.length?`<div class="row muted">${rem.length} still need your decision — open the Conflicts tab.</div>`:`<div class="row" style="color:var(--ok)">All clear — ready to export.</div>`)+
+    `<div class="act"><button class="primary" onclick="closePopup()">Done</button></div>`);
+}
 function resolveAll(){
   pushUndo();
   let moves=0,guard=0;
@@ -926,7 +979,9 @@ function renderWorkload(){ // "Teacher overview" + "Realized bookings"
   const {evs,realized,adminH}=analyticsData();
   const stats=teamStats(evs), courses=courseStats(evs);
   stats.forEach(s=>s.admin=adminH[s.t]||0);
-  const head=realized?`<div class="box" style="border-left:3px solid var(--ok)"><b>📁 Realized bookings · ${esc(realizedYear)}</b> <span class="muted">— actual sessions from the booking system (course hours logged per course; meetings/events counted separately as admin hours, on top of the course-workload target within the ~${(YEARLY.working_year_hours||1600)} h work year).</span></div>`:"";
+  const head=realized?`<div class="box" style="border-left:3px solid var(--ok)"><b>📁 Realized bookings · ${esc(realizedYear)}</b> <span class="muted">— actual sessions teachers were really booked for (a follow-up view; kept simple for now).</span>`+
+    `<div class="row muted" style="margin-top:6px"><b>How this will work:</b> go to <b>Arcada Timetabler</b> (<a href="https://timetable.arcada.fi/Timetable" target="_blank" rel="noopener" style="color:var(--accent)">timetable.arcada.fi/Timetable</a>), download the teachers' actual bookings, then import them here to compare planned vs. realized.</div>`+
+    `<div class="act"><button onclick="realizedImport()">📥 Import realized bookings</button></div></div>`:"";
   // realized: booked hours only — hide ECTS-based metrics and always-zero ones
   const mEntries=realized?[["inclass","Course hours (booked)"],["sessions","Sessions"],["courses","Courses"]]:Object.entries(METRICS);
   const aEntries=realized?[["inclass","Course hours"],["sessions","Sessions"],["courses","Courses"]]:Object.entries(AXIS);
@@ -1261,9 +1316,8 @@ async function renderHome(){
       `<div class="stat"><b>${s.bookings||0}</b><span>sessions loaded</span></div>`+
       `<div class="stat"><b>${s.teachers||0}</b><span>teachers</span></div>`+
       `<div class="stat"><b>${s.courses||0}</b><span>courses</span></div>`+
-      `<div class="stat"><b>${s.using_dummy?"Demo":"Your data"}</b><span>${s.using_dummy?"sample data loaded":"real bookings"}</span></div>`+
       `<div class="stat"><b>${s.ai?"On":"Off"}</b><span>AI assist</span></div></div>`+
-      (s.using_dummy?`<div class="box" style="margin-top:8px">You're viewing <b>demo data</b>. Use <b>📥 Import</b> to load your own teacher files — they replace the demo.</div>`:"")+
+      (!s.bookings?`<div class="box" style="margin-top:8px">No bookings loaded yet. Start with <b>📥 Import</b> to add the teachers' booking files, or set up teachers/courses/groups in <b>⚙ Manage</b>.</div>`:"")+
       `<div class="box" style="margin-top:10px"><b>Where files are saved</b>`+
         `<div class="muted">Final Excel → <code>${esc(s.export_dir||"export")}</code> &nbsp;·&nbsp; data source → <code>${esc(s.data_dir||"")}</code></div></div>`+
       `<div class="act" style="margin-top:10px"><button class="primary" onclick="go('import')">📥 Start: import files</button>`+
@@ -1331,6 +1385,19 @@ function importMerge(kind){
       mgrAppendRow("tbX",[{f:"code"}],{code:g.code}); });
   }
   closePopup(); toast("Added — review, then Save & apply.","ok");
+}
+function realizedImport(){
+  const inp=document.createElement("input"); inp.type="file"; inp.accept=".xlsx,.csv"; inp.multiple=true;
+  inp.onchange=async()=>{ const files=[...inp.files]; if(!files.length) return;
+    toast("Uploading "+files.length+" file(s)…","ok");
+    const payload=[]; for(const f of files) payload.push({name:f.name,b64:await fileB64(f)});
+    try{ const j=await (await fetch("/import/realized",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({files:payload})})).json();
+      exportModal(`<h3>📁 Realized bookings imported</h3><div class="row">Saved <b>${j.saved||0}</b> file(s) to <code>${esc(j.dir||"")}</code>.</div>`+
+        `<div class="row muted">Stored for now — reading them into the analysis is a planned next step.</div>`+
+        `<div class="act"><button class="primary" onclick="closePopup()">OK</button></div>`);
+    }catch(e){ toast("Upload failed — is the server running?","warn"); }
+  };
+  inp.click();
 }
 async function renderManage(){
   $("#view").innerHTML=`<div class="manage"><div class="mtabs">`+
@@ -1420,9 +1487,20 @@ async function mgrSaveGroups(){
   await mgrApply("/config/programs",{programs,tracks,extra,base_year:+$("#gBase").value||26,window:+$("#gWin").value||4});
 }
 async function mgrSettings(){
-  const s=await (await fetch("/config/settings")).json();
+  const [s,ai]=await Promise.all([fetch("/config/settings").then(r=>r.json()),fetch("/config/ai").then(r=>r.json())]);
   const fld=(id,label,val,hint)=>`<div class="row"><b>${label}</b> <input id="${id}" class="sm" value="${esc(val)}"> <span class="muted">${hint||""}</span></div>`;
+  const modelOpts=(ai.models||[]).map(m=>`<option value="${esc(m.id)}" ${m.id===ai.model?"selected":""}>${esc(m.label)}</option>`).join("");
+  const rec=(ai.models||[]).map(m=>`<div class="airow"><b>${esc(m.label)}</b> <span class="muted">— ${esc(m.note)}</span></div>`).join("");
   $("#mbody").innerHTML=
+    `<div class="box"><b>🤖 AI conflict solver</b> <span class="muted">— optional. Powers the <b>Resolve all (AI)</b> button and per-conflict suggestions.</span>`+
+      `<div class="row"><b>API key</b> <input id="aiKey" type="password" autocomplete="off" placeholder="${ai.has_key?"•••••• saved — leave blank to keep":"sk-ant-…"}" style="width:300px"> <span class="muted">${ai.has_key?"✓ a key is saved on this computer":"stored locally in .env, next to the app"}</span></div>`+
+      `<div class="row"><b>Model</b> <select id="aiModel">${modelOpts}</select></div>`+
+      `<div class="box" style="margin:6px 0;background:var(--panel2)"><div class="muted" style="margin-bottom:4px">Which model? (prices are rough estimates)</div>${rec}</div>`+
+      `<div class="row"><b>Spending cap</b> $ <input id="aiCap" class="sm" value="${esc(ai.cap_usd||0)}"> <span class="muted">per month — 0 means no cap. Used this month ≈ $${(ai.spent_usd||0).toFixed(2)} (estimate)</span></div>`+
+      `<div class="row"><b>Custom instructions for solving conflicts</b></div>`+
+      `<textarea id="aiInstr" rows="6" style="width:100%;box-sizing:border-box;background:var(--panel);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:7px">${esc(ai.instructions||"")}</textarea>`+
+      `<div class="muted" style="margin-top:4px">For example: which groups, teachers or rooms may sometimes be double-booked · which clashes are never allowed · high-priority courses · preferred days or times.</div>`+
+      `<div class="act"><button class="primary" onclick="mgrSaveAI()">💾 Save AI settings</button><span id="aisaved" class="muted"></span></div></div>`+
     `<div class="box"><b>Folders</b> <span class="muted">(all next to the app — created automatically)</span>`+
       `<div class="row"><b>Data source</b> <input id="sData" value="${esc(s.data_dir)}" style="width:240px"> <span class="muted">${esc(s.data_dir_full||"")}</span></div>`+
       `<div class="row"><b>📤 Export (final Excel)</b> <code>${esc(s.export_dir)}</code></div>`+
@@ -1440,6 +1518,16 @@ async function mgrSaveSettings(){
   await mgrApply("/config/settings",{data_dir:$("#sData").value.trim(),
     hours_per_ects_coursework:+$("#sHpe").value||20,yearly_low:+$("#sYlo").value||800,yearly_high:+$("#sYhi").value||1200,
     inclass_warn_low:+$("#sIlo").value||8,inclass_warn_high:+$("#sIhi").value||14});
+}
+async function mgrSaveAI(){
+  const sv=$("#aisaved"); if(sv)sv.textContent=" saving…";
+  const payload={model:$("#aiModel").value,cap_usd:+$("#aiCap").value||0,instructions:$("#aiInstr").value};
+  const k=$("#aiKey").value.trim(); if(k)payload.api_key=k;
+  try{
+    await fetch("/config/ai",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    AI=await (await fetch("/ai/status")).json(); updateSolverButtons();
+    if(sv)sv.textContent=" ✓ saved"; toast("AI settings saved"+(k?" — AI is now enabled.":"."),"ok");
+  }catch(e){ toast("Could not save AI settings.","warn"); if(sv)sv.textContent=""; }
 }
 function mgrSaveBar(saveFn){
   return `<div class="savebar"><button class="primary" onclick="${saveFn}">💾 Save &amp; apply</button>`+
@@ -1473,6 +1561,7 @@ $("#undoBtn").onclick=undo;
 $("#exportBtn").onclick=exportExcel;
 $("#resetBtn").onclick=resetConfirm;
 $("#resolveBtn").onclick=resolveAll;
+$("#aiResolveBtn").onclick=aiResolveAll;
 $("#helpBtn").onclick=helpModal;
 $("#impFile").onchange=e=>{impUpload(e.target.files);e.target.value="";};
 $("#cfgFile").onchange=e=>{const f=e.target.files[0];e.target.value="";cfgFilePicked(f);};
@@ -1482,7 +1571,7 @@ $("#view").addEventListener("click",e=>{const c=e.target.closest(".ev[data-id]")
 $("#modal").addEventListener("click",e=>{if(e.target.id==="modal")closePopup();});
 // only the FM team (config/teacher_aliases.csv), not guest/visiting names
 [...TEAM].sort().forEach(t=>{const o=document.createElement("option");o.value=o.textContent=t;$("#teacher").appendChild(o);});
-fetch("/ai/status").then(r=>r.json()).then(s=>{AI=s;}).catch(()=>{});  // optional; AI assist if a key is set
+fetch("/ai/status").then(r=>r.json()).then(s=>{AI=s;updateSolverButtons();}).catch(()=>{});  // optional; AI assist if a key is set
 render();
 </script>
 </body>

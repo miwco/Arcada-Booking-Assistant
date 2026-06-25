@@ -22,46 +22,6 @@
     "target_high": 800
   },
   "_note_realized": "REALIZED view: count BOOKED hours only (overlapping bookings count once — the longer one). Compare a teacher's booked COURSE hours to this range. Admin/meeting hours are kept separate and are NOT included in this target. No per-teacher course-work estimate is made for realized data.",
-  "teachers": {
-    "Teacher A": {
-      "fte": 1.0
-    },
-    "Teacher B": {
-      "fte": 1.0
-    },
-    "Teacher C": {
-      "fte": 1.0
-    },
-    "Teacher D": {
-      "fte": 1.0
-    },
-    "Teacher E": {
-      "fte": 1.0
-    },
-    "Teacher F": {
-      "fte": 1.0
-    },
-    "Teacher G": {
-      "fte": 1.0
-    },
-    "Teacher H": {
-      "fte": 1.0
-    },
-    "Teacher I": {
-      "fte": 1.0
-    },
-    "Teacher J": {
-      "fte": 1.0
-    },
-    "Teacher K": {
-      "fte": 1.0
-    },
-    "Teacher L": {
-      "fte": 1.0
-    },
-    "Teacher M": {
-      "fte": 1.0
-    }
-  },
+  "teachers": {},
   "_note_teachers": "Per teacher you can set 'fte' (scales the default yearly target range, e.g. 0.5 -> 400–600 h) or set explicit 'yearly_low' and 'yearly_high' to override entirely."
 }

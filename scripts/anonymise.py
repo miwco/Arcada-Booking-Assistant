@@ -128,42 +128,30 @@ def scrub(text, replacements):
     return text
 
 
-def write_config_example(label_of):
+def write_config_example(label_of=None):
+    """Write GENERIC starter config (no real or example-specific data). Decoupled
+    from the real files on purpose, so the public config.example/ never carries this
+    case's courses, typos or corrections."""
     os.makedirs(OUT_CONFIG, exist_ok=True)
-    labels = list(label_of.values()) or [_label(i) for i in range(6)]
-    # teacher_aliases.csv — generic names, one example alias to show the format
     with open(os.path.join(OUT_CONFIG, "teacher_aliases.csv"), "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["canonical_name", "aliases"])
-        for i, name in enumerate(labels):
-            w.writerow([name, "TA" if i == 0 else ""])
-    # teacher_typos.csv — synthetic misspelling examples only
+        w.writerow(["Example Teacher One", "ET1; E. Teacher"])
+        w.writerow(["Example Teacher Two", ""])
     with open(os.path.join(OUT_CONFIG, "teacher_typos.csv"), "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow(["wrong", "correct"])
+    with open(os.path.join(OUT_CONFIG, "course_master.csv"), "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["wrong", "correct"])
-        if labels:
-            w.writerow([labels[0].replace("Teacher", "Techer"), labels[0]])
-            if len(labels) > 1:
-                w.writerow([labels[1].replace("Teacher", "Teachr"), labels[1]])
-    # course data is not personal — copy verbatim
-    for fn in ("course_master.csv", "course_code_fixes.csv"):
-        src = os.path.join(CONFIG, fn)
-        if os.path.exists(src):
-            shutil.copyfile(src, os.path.join(OUT_CONFIG, fn))
-    # workload_targets.json — keep structure, remap the per-teacher map to labels
-    src = os.path.join(CONFIG, "workload_targets.json")
-    if os.path.exists(src):
-        with open(src, encoding="utf-8-sig") as f:
-            wt = json.load(f)
-        if isinstance(wt.get("teachers"), dict):
-            wt["teachers"] = {label_of.get(k, k): v for k, v in wt["teachers"].items() if k in label_of}
-        with open(os.path.join(OUT_CONFIG, "workload_targets.json"), "w", encoding="utf-8") as f:
-            json.dump(wt, f, ensure_ascii=False, indent=2)
-    # settings example
+        w.writerow(["code", "name", "ects", "notes"])
+        w.writerow(["EX-1-001", "Example Course One", "5", ""])
+        w.writerow(["EX-1-002", "Example Course Two", "5", ""])
+        w.writerow(["EX-2-010", "Example Advanced Course", "10", ""])
+    with open(os.path.join(OUT_CONFIG, "course_code_fixes.csv"), "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow(["wrong_code", "correct_code", "reason"])
     with open(os.path.join(OUT_CONFIG, "settings.example.json"), "w", encoding="utf-8") as f:
         json.dump({"_comment": "Copy to config/settings.json; data_dir points at your data folder.",
-                   "data_dir": "_info_example"}, f, ensure_ascii=False, indent=2)
-    return len(labels)
+                   "data_dir": "data"}, f, ensure_ascii=False, indent=2)
+    return 2
 
 
 # Non-personal filenames safe to keep verbatim: cohort codes (media-23-HT-2026),
@@ -215,29 +203,16 @@ def main(argv=None):
     print(f"anonymise: wrote config.example/ ({count} generic teachers)")
     # scrub map covers the team PLUS every guest name that appears in the data
     _, replacements = build_maps(src if os.path.isdir(src) else None)
-    if "--sample" in argv:
-        # committed dummy dataset: only the cohort-coded booking workbooks (safe
-        # filenames), cells scrubbed — so a public clone runs out of the box.
-        sub = "bokningsönskemålen_2026_2027"
-        s = os.path.join(src, sub)
-        if not os.path.isdir(s):
-            print(f"anonymise: {s} not found — cannot build sample")
-        else:
-            dst = os.path.join(ROOT, "_info_example", sub)
-            if os.path.isdir(dst):
-                shutil.rmtree(dst)
-            done, total = anonymise_data(s, dst, replacements, generic_names=False)
-            print(f"anonymise: built sample _info_example/{sub} ({done}/{total} workbook(s), names kept-but-scrubbed)")
     if "--data" in argv:
         i = argv.index("--data")
-        dst = argv[i + 1] if i + 1 < len(argv) else os.path.join(ROOT, "_info_example")
+        dst = argv[i + 1] if i + 1 < len(argv) else os.path.join(ROOT, "anonymised_data")
         if not os.path.isdir(src):
             print(f"anonymise: data source {src} not found — skipping data step")
         else:
             done, total = anonymise_data(src, dst, replacements)
             print(f"anonymise: scrubbed {done}/{total} workbook(s) -> {os.path.relpath(dst, ROOT)}")
-    if "--data" not in argv and "--sample" not in argv:
-        print("anonymise: pass --sample (committed dummy data) or --data [OUTDIR] (full scrub)")
+    else:
+        print("anonymise: pass --data [OUTDIR] to also scrub a folder of booking Excel files")
 
 
 if __name__ == "__main__":

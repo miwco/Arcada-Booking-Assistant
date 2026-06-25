@@ -12,7 +12,7 @@ import json
 import os
 import shutil
 
-from .dictionaries import (APP_DIR, BUNDLE, DATA_DIR, EXPORT_DIR, IMPORT_DIR, OUTPUT_DIR,
+from .dictionaries import (APP_DIR, DATA_DIR, EXPORT_DIR, IMPORT_DIR, OUTPUT_DIR,
                            TEMPLATES_DIR, active_cohort_years, cfg_path, data_dir,
                            generate_group_codes, media_tracks, programs)
 
@@ -62,13 +62,6 @@ def bootstrap():
             src = cfg_path(name)          # resolves to bundle/config or config.example
             if os.path.exists(src):
                 shutil.copyfile(src, dest)
-    # seed a stable demo data folder next to the app (so the source isn't a Temp path)
-    demo_sub = "bokningsönskemålen_2026_2027"
-    if not os.path.isdir(os.path.join(DATA_DIR, demo_sub)) \
-            and not os.path.isdir(os.path.join(APP_DIR, "_info", demo_sub)):
-        bundled = os.path.join(BUNDLE, "_info_example", demo_sub)
-        if os.path.isdir(bundled):
-            shutil.copytree(bundled, os.path.join(DATA_DIR, demo_sub))
     # write the downloadable Excel templates
     try:
         from . import imports
@@ -77,7 +70,6 @@ def bootstrap():
         pass
     return {"config_dir": CONFIG_DIR, "data_dir": data_dir(), "import_dir": IMPORT_DIR,
             "export_dir": EXPORT_DIR, "templates_dir": TEMPLATES_DIR}
-    return {"config_dir": CONFIG_DIR, "export_dir": EXPORT_DIR, "output_dir": OUTPUT_DIR}
 
 
 # ---- teachers --------------------------------------------------------------
@@ -236,4 +228,33 @@ def set_programs(payload):
     if isinstance(payload.get("extra"), list):
         upd["extra_groups"] = sorted({(g or "").strip() for g in payload["extra"] if (g or "").strip()})
     _save_settings_json(upd)
+    return {"ok": True}
+
+
+# ---- AI settings (.env key, model, spend cap, conflict instructions) -------
+def get_ai():
+    from . import ai_assist
+    st = ai_assist.status()
+    s = _settings_json()
+    return {**st, "models": ai_assist.MODELS, "has_key": st["available"],
+            "instructions": s.get("ai_instructions", "")}
+
+
+def set_ai(payload):
+    from . import ai_assist
+    key = (payload.get("api_key") or "").strip()
+    if key and not key.startswith("•"):                # ignore the masked placeholder
+        ai_assist.write_env(key)
+    upd = {}
+    if payload.get("model"):
+        upd["ai_model"] = payload["model"]
+    if "cap_usd" in payload:
+        try:
+            upd["ai_cap_usd"] = float(payload["cap_usd"] or 0)
+        except (TypeError, ValueError):
+            pass
+    if "instructions" in payload:
+        upd["ai_instructions"] = payload["instructions"]
+    if upd:
+        _save_settings_json(upd)
     return {"ok": True}
