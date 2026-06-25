@@ -160,6 +160,26 @@ TEMPLATE = r"""<!DOCTYPE html>
   .aimsg{font-size:13px;color:var(--txt)}
   .airow{padding:4px 7px;margin:3px 0;border-radius:6px;background:var(--panel);border:1px solid var(--line)}
   .airow.best{border-color:var(--ok);background:rgba(52,211,153,.10)}
+  .home,.manage{max-width:940px}
+  .hero{background:linear-gradient(135deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:14px}
+  .hero h2{margin:0 0 4px;font-size:22px}
+  .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:14px 0}
+  .stepcard{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;cursor:pointer;transition:border-color .12s,transform .12s}
+  .stepcard:hover{border-color:var(--accent);transform:translateY(-2px)}
+  .stepcard .n{display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center;border-radius:50%;background:var(--accent);color:#fff;font-size:12px;font-weight:700;margin-right:6px}
+  .stepcard b{font-size:14px}.stepcard .d{color:var(--muted);font-size:12px;margin-top:5px}
+  .statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:8px}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px}
+  .stat b{font-size:19px;display:block;line-height:1.2}.stat span{color:var(--muted);font-size:12px}
+  .mtabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+  .mtab{padding:6px 13px;border:1px solid var(--line);border-radius:8px;cursor:pointer;background:var(--panel);font-size:13px}
+  .mtab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .gtable{width:100%;border-collapse:collapse;font-size:13px;margin-top:4px}
+  .gtable th{color:var(--muted);font-weight:600;text-align:left;padding:4px 7px;border-bottom:1px solid var(--line)}
+  .gtable td{padding:3px 7px;border-bottom:1px solid var(--line);vertical-align:middle}
+  .gtable input{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--txt);border-radius:5px;padding:5px 7px;box-sizing:border-box}
+  .gtable input.sm{width:80px}
+  .savebar{position:sticky;bottom:0;background:var(--bg);padding:10px 0;border-top:1px solid var(--line);margin-top:10px;display:flex;gap:8px;align-items:center}
   #toast.ok{background:#0f3a2c;border:1px solid var(--ok);color:#d6fbee}
 </style>
 </head>
@@ -167,14 +187,16 @@ TEMPLATE = r"""<!DOCTYPE html>
 <header>
   <h1>📅 Booking Assistant <span class="muted" style="font-weight:400">· Film &amp; Media · 2026–2027</span></h1>
   <div class="tabs">
+    <div class="tab active" data-view="home">🏠 Home</div>
     <div class="tab" data-view="import">📥 Import</div>
-    <div class="tab active" data-view="calendar">Planning calendar</div>
+    <div class="tab" data-view="calendar">Planning calendar</div>
     <div class="tab" data-view="compare">Compare</div>
     <div class="tab" data-view="workload">Teacher overview</div>
     <div class="tab" data-view="realized">Realized bookings</div>
     <div class="tab" data-view="conflicts">Conflicts</div>
+    <div class="tab" data-view="manage">⚙ Manage</div>
   </div>
-  <div class="controls">
+  <div class="controls" id="controls">
     <button id="undoBtn" title="Undo (Ctrl+Z)">↶ Undo</button>
     <button id="resetBtn" title="Reset all changes to the original import">↺ Reset</button>
     <button id="resolveBtn" title="Try to auto-resolve all conflicts by moving lectures">🪄 Resolve all</button>
@@ -201,7 +223,7 @@ const WDAYS=["Mon","Tue","Wed","Thu","Fri"];
 const WLABEL={Mon:"Må",Tue:"Ti",Wed:"On",Thu:"To",Fri:"Fr"};
 const SPECF=[["F","Foto"],["L","Ljud"],["M","Manus"],["O","Online"],["P","Prod"]];
 const ALLSPECS=["F","L","M","O","P"];
-let view="calendar", cohort=null, specSel=new Set(ALLSPECS), showExt=false;
+let view="home", cohort=null, specSel=new Set(ALLSPECS), showExt=false;
 let cmpA=null, cmpB=null, curPopup=null, dragId=null;
 let IMPUP=[], IMPVAL=null, IMPAPP={};   // import screen: uploaded files, validation findings, approvals
 let AI={available:false};               // /ai/status — is the Claude API key configured
@@ -389,7 +411,10 @@ const weekKey=w=>w>=30?w:w+100;
 function render(){
   MODEL=buildModel(); OCC=buildOcc(MODEL); computeConflicts(MODEL,OCC);
   renderLegend(); renderFilters(); refreshUndo();
-  if(view==="import") renderImport();
+  const ctl=$("#controls"); if(ctl) ctl.style.display=(view==="home"||view==="manage"||view==="import")?"none":"flex";
+  if(view==="home") renderHome();
+  else if(view==="manage") renderManage();
+  else if(view==="import") renderImport();
   else if(view==="calendar") renderCalendar();
   else if(view==="compare") renderCompare();
   else if(view==="workload"||view==="realized") renderWorkload();
@@ -408,7 +433,7 @@ function renderLegend(){
     +`<span><i class="sample" style="border:1.5px dashed #fff;background:transparent"></i>🤖 AI</span>`;
 }
 function renderFilters(){
-  if(view==="conflicts"||view==="import"){$("#filters").innerHTML="";return;}
+  if(view==="conflicts"||view==="import"||view==="home"||view==="manage"){$("#filters").innerHTML="";return;}
   if(view==="realized"){
     $("#filters").innerHTML=`<div class="filters"><b>Realized year:</b> <select id="ryear">`+
       RYEARS.map(y=>`<option ${y===realizedYear?"selected":""}>${esc(y)}</option>`).join("")+`</select>`+
@@ -1210,6 +1235,141 @@ async function impApply(){
       ` loaded · ${approved.length} corrections applied.</div>`+
     (j.skipped?`<div class="row muted">${j.skipped} non-FM course(s) without a team teacher were skipped.</div>`:"")+
     `<div class="act"><button class="primary" onclick="location.reload()">Open the planner →</button></div>`);
+}
+
+/* ---- Home (start screen) ----------------------------------------------- */
+function go(v){document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x.dataset.view===v));view=v;render();}
+async function renderHome(){
+  let s={}; try{ s=await (await fetch("/status")).json(); }catch(e){ s={offline:true}; }
+  const steps=[
+    ["📥","Import files","Upload the teachers' Excel and load them","go('import')"],
+    ["🔎","Review &amp; fix","Check detected data, approve corrections","go('import')"],
+    ["📅","Plan timetable","See the weekly calendar, drag lectures","go('calendar')"],
+    ["⚠️","Resolve conflicts","Auto-resolve or fix clashes","go('conflicts')"],
+    ["⬇","Export Excel","Write the final booker files","exportExcel()"]];
+  let h=`<div class="home"><div class="hero"><h2>Booking Assistant</h2>`+
+    `<div class="muted">Turn teachers' booking requests into clean, conflict-free Excel files — all in one place, no spreadsheets to edit by hand.</div></div>`;
+  if(s.offline){
+    h+=`<div class="box">⚠ Start the app with <b>BookingAssistant.exe</b> (or run.bat) to enable the full workflow.</div>`;
+  }else{
+    h+=`<b>How it works</b><div class="steps">`+steps.map((st,i)=>
+      `<div class="stepcard" onclick="${st[3]}"><div><span class="n">${i+1}</span><b>${st[0]} ${st[1]}</b></div><div class="d">${st[2]}</div></div>`).join("")+`</div>`;
+    h+=`<b>Status</b><div class="statgrid">`+
+      `<div class="stat"><b>${s.bookings||0}</b><span>sessions loaded</span></div>`+
+      `<div class="stat"><b>${s.teachers||0}</b><span>teachers</span></div>`+
+      `<div class="stat"><b>${s.courses||0}</b><span>courses</span></div>`+
+      `<div class="stat"><b>${s.using_dummy?"Demo":"Your data"}</b><span>${s.using_dummy?"sample data loaded":"real bookings"}</span></div>`+
+      `<div class="stat"><b>${s.ai?"On":"Off"}</b><span>AI assist</span></div></div>`+
+      (s.using_dummy?`<div class="box" style="margin-top:8px">You're viewing <b>demo data</b>. Use <b>📥 Import</b> to load your own teacher files — they replace the demo.</div>`:"")+
+      `<div class="box" style="margin-top:10px"><b>Where files are saved</b>`+
+        `<div class="muted">Final Excel → <code>${esc(s.export_dir||"export")}</code> &nbsp;·&nbsp; data source → <code>${esc(s.data_dir||"")}</code></div></div>`+
+      `<div class="act" style="margin-top:10px"><button class="primary" onclick="go('import')">📥 Start: import files</button>`+
+        `<button onclick="go('calendar')">📅 Open planner</button>`+
+        `<button onclick="exportExcel()">⬇ Export Excel</button>`+
+        `<button onclick="go('manage')">⚙ Manage teachers &amp; courses</button></div>`;
+  }
+  $("#view").innerHTML=h+`</div>`;
+}
+
+/* ---- Manage (teachers / courses / groups / settings) ------------------- */
+let mtab="teachers";
+function mrow(fields,vals){return fields.map(f=>`<td><input class="${f.cls||""}" data-f="${f.f}" value="${esc(vals[f.f]||"")}" placeholder="${f.ph||""}"></td>`).join("");}
+function mgrAddRow(tbId,fields){const tb=$("#"+tbId);const tr=document.createElement("tr");
+  tr.innerHTML=mrow(fields,{})+`<td><button class="small warn" onclick="this.closest('tr').remove()">✕</button></td>`;
+  tb.appendChild(tr);const inp=tr.querySelector("input");if(inp)inp.focus();}
+function mgrCollect(tbId){return [...$("#"+tbId).querySelectorAll("tr")].map(tr=>{const o={};
+  tr.querySelectorAll("input").forEach(i=>o[i.dataset.f]=i.value.trim());return o;}).filter(o=>Object.values(o).some(v=>v));}
+async function renderManage(){
+  $("#view").innerHTML=`<div class="manage"><div class="mtabs">`+
+    [["teachers","👤 Teachers"],["courses","📚 Courses"],["groups","🎓 Groups & specializations"],["settings","⚙ Settings"]]
+      .map(([k,l])=>`<div class="mtab ${mtab===k?"active":""}" onclick="mtab='${k}';renderManage()">${l}</div>`).join("")+
+    `</div><div id="mbody" class="muted">Loading…</div></div>`;
+  try{
+    if(mtab==="teachers") await mgrTeachers();
+    else if(mtab==="courses") await mgrCourses();
+    else if(mtab==="groups") await mgrGroups();
+    else await mgrSettings();
+  }catch(e){ $("#mbody").innerHTML=`<div class="box">⚠ Needs the local server (BookingAssistant.exe / run.bat).</div>`; }
+}
+async function mgrTeachers(){
+  const d=await (await fetch("/config/teachers")).json();
+  const tf=[{f:"name",ph:"Full name"},{f:"aliases",ph:"nicknames; spellings"}];
+  const yf=[{f:"wrong",ph:"misspelling in files"},{f:"correct",ph:"correct name"}];
+  $("#mbody").innerHTML=`<div class="muted">Your teaching team. The planner credits hours to these names; aliases catch nicknames or alternate spellings used in the Excel files.</div>`+
+    `<table class="gtable"><thead><tr><th>Name</th><th>Aliases (optional)</th><th></th></tr></thead><tbody id="tbT">`+
+      d.teachers.map(t=>`<tr>${mrow(tf,{name:t.name,aliases:(t.aliases||[]).join("; ")})}<td><button class="small warn" onclick="this.closest('tr').remove()">✕</button></td></tr>`).join("")+
+    `</tbody></table><div class="act"><button onclick="mgrAddRow('tbT',[{f:'name',ph:'Full name'},{f:'aliases',ph:'nicknames; spellings'}])">+ Add teacher</button></div>`+
+    `<div class="step" style="font-size:14px">Name corrections <span class="muted">(auto-fix a known misspelling → correct name)</span></div>`+
+    `<table class="gtable"><thead><tr><th>Wrong spelling</th><th>Correct name</th><th></th></tr></thead><tbody id="tbTy">`+
+      d.typos.map(t=>`<tr>${mrow(yf,t)}<td><button class="small warn" onclick="this.closest('tr').remove()">✕</button></td></tr>`).join("")+
+    `</tbody></table><div class="act"><button onclick="mgrAddRow('tbTy',[{f:'wrong',ph:'misspelling'},{f:'correct',ph:'correct name'}])">+ Add correction</button></div>`+
+    mgrSaveBar("mgrSaveTeachers()");
+}
+async function mgrSaveTeachers(){
+  const teachers=mgrCollect("tbT").map(o=>({name:o.name,aliases:(o.aliases||"").split(";").map(s=>s.trim()).filter(Boolean)}));
+  const typos=mgrCollect("tbTy").filter(o=>o.wrong&&o.correct);
+  await mgrApply("/config/teachers",{teachers,typos});
+}
+async function mgrCourses(){
+  const d=await (await fetch("/config/courses")).json();
+  const cf=[{f:"code",cls:"sm",ph:"AS-1-044"},{f:"name",ph:"Course name"},{f:"ects",cls:"sm",ph:"5"},{f:"notes",ph:"optional"}];
+  $("#mbody").innerHTML=`<div class="muted">Courses the app knows (code → name + ECTS). ECTS drives the workload estimates.</div>`+
+    `<table class="gtable"><thead><tr><th>Code</th><th>Name</th><th>ECTS</th><th>Notes</th><th></th></tr></thead><tbody id="tbC">`+
+      d.courses.map(c=>`<tr>${mrow(cf,c)}<td><button class="small warn" onclick="this.closest('tr').remove()">✕</button></td></tr>`).join("")+
+    `</tbody></table><div class="act"><button onclick="mgrAddRow('tbC',[{f:'code',cls:'sm',ph:'AS-1-044'},{f:'name',ph:'Course name'},{f:'ects',cls:'sm',ph:'5'},{f:'notes',ph:'optional'}])">+ Add course</button></div>`+
+    mgrSaveBar("mgrSaveCourses()");
+}
+async function mgrSaveCourses(){ await mgrApply("/config/courses",{courses:mgrCollect("tbC")}); }
+async function mgrGroups(){
+  const s=await (await fetch("/config/settings")).json();
+  const specs=s.specializations||{};
+  const sf=[{f:"letter",cls:"sm",ph:"F"},{f:"label",ph:"Foto"}];
+  $("#mbody").innerHTML=`<div class="muted">Student groups are generated automatically as <b>Media-YY</b> (whole year) and <b>Media-YY-X</b> per specialization, plus <b>KP-YY</b>. Set the year range and the specializations here.</div>`+
+    `<div class="act"><label>Cohort years 20<input class="sm" id="gY0" value="${esc(s.cohort_year_start)}" style="width:50px">–<input class="sm" id="gY1" value="${esc(s.cohort_year_end)}" style="width:50px"></label> <span class="muted">(e.g. 20–26 → Media-20 … Media-26)</span></div>`+
+    `<div class="step" style="font-size:14px">Specializations</div>`+
+    `<table class="gtable"><thead><tr><th>Letter</th><th>Label</th><th></th></tr></thead><tbody id="tbG">`+
+      Object.entries(specs).map(([k,v])=>`<tr>${mrow(sf,{letter:k,label:v})}<td><button class="small warn" onclick="this.closest('tr').remove()">✕</button></td></tr>`).join("")+
+    `</tbody></table><div class="act"><button onclick="mgrAddRow('tbG',[{f:'letter',cls:'sm',ph:'F'},{f:'label',ph:'Foto'}])">+ Add specialization</button></div>`+
+    mgrSaveBar("mgrSaveGroups()");
+}
+async function mgrSaveGroups(){
+  const specs={}; mgrCollect("tbG").forEach(o=>{if(o.letter)specs[o.letter.toUpperCase().slice(0,2)]=o.label||o.letter;});
+  await mgrApply("/config/settings",{cohort_year_start:+$("#gY0").value||20,cohort_year_end:+$("#gY1").value||26,specializations:specs});
+}
+async function mgrSettings(){
+  const s=await (await fetch("/config/settings")).json();
+  const fld=(id,label,val,hint)=>`<div class="row"><b>${label}</b> <input id="${id}" class="sm" value="${esc(val)}"> <span class="muted">${hint||""}</span></div>`;
+  $("#mbody").innerHTML=
+    `<div class="box"><b>Folders</b>`+
+      `<div class="row"><b>Data source</b> <input id="sData" value="${esc(s.data_dir)}" style="width:260px"> <span class="muted">folder with your booking Excel (relative to the app)</span></div>`+
+      `<div class="row muted">Final Excel is written to <code>${esc(s.export_dir)}</code> (created automatically).</div></div>`+
+    `<div class="box"><b>Workload targets</b> <span class="muted">(planning guides only — used for the "possible issues" flags)</span>`+
+      fld("sHpe","Hours per ECTS (course-work)",s.hours_per_ects_coursework,"5 ECTS ≈ 100 h")+
+      fld("sYlo","Yearly course-work — low",s.yearly_low,"warn below")+
+      fld("sYhi","Yearly course-work — high",s.yearly_high,"warn above")+
+      fld("sIlo","In-class h per ECTS — warn low",s.inclass_warn_low,"")+
+      fld("sIhi","In-class h per ECTS — warn high",s.inclass_warn_high,"")+`</div>`+
+    mgrSaveBar("mgrSaveSettings()");
+}
+async function mgrSaveSettings(){
+  await mgrApply("/config/settings",{data_dir:$("#sData").value.trim(),
+    hours_per_ects_coursework:+$("#sHpe").value||20,yearly_low:+$("#sYlo").value||800,yearly_high:+$("#sYhi").value||1200,
+    inclass_warn_low:+$("#sIlo").value||8,inclass_warn_high:+$("#sIhi").value||14});
+}
+function mgrSaveBar(saveFn){
+  return `<div class="savebar"><button class="primary" onclick="${saveFn}">💾 Save &amp; apply</button>`+
+    `<span class="muted">Saves your changes and rebuilds the planner so they take effect.</span><span id="msaved"></span></div>`;
+}
+async function mgrApply(endpoint,payload){
+  const sv=$("#msaved"); if(sv)sv.textContent=" saving…";
+  try{
+    const r=await fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    const j=await r.json(); if(!j.ok&&j.ok!==undefined){throw new Error(j.message||"save failed");}
+    if(sv)sv.textContent=" rebuilding…";
+    await fetch("/rebuild",{method:"POST"});
+    toast("Saved and applied. Reloading…","ok");
+    setTimeout(()=>location.reload(),500);
+  }catch(e){ toast("Could not save: "+esc(""+(e.message||e)),"warn"); if(sv)sv.textContent=""; }
 }
 
 /* ---- bindings ---------------------------------------------------------- */

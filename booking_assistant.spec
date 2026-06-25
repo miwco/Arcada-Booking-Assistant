@@ -39,7 +39,7 @@ hiddenimports = [
     "pipeline.dictionaries", "pipeline.dashboard", "pipeline.exporter",
     "pipeline.apply_import", "pipeline.validate_import", "pipeline.ai_assist",
     "pipeline.parse_requests", "pipeline.scheduler", "pipeline.calendar_model",
-    "pipeline.normalize",
+    "pipeline.normalize", "pipeline.config_store",
 ]
 
 a = Analysis(

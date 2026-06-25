@@ -15,6 +15,25 @@ A tool to understand, visualize, check and coordinate course bookings for the
 Everything runs locally and offline. Optional AI assist (reading messy comments,
 ranking conflict fixes) turns on when you add a Claude API key — see **AI assist**.
 
+### A complete app — no files or folders to set up by hand
+
+On first launch the app **sets itself up**: it creates the `export/`, `output/` and
+upload folders and seeds an editable `config/` so it runs immediately on bundled
+demo data. The whole workflow is graphical:
+
+- **🏠 Home** — a start screen with the workflow as numbered steps (Import → Review
+  → Plan → Resolve → Export), live status (sessions loaded, teachers, courses,
+  where files are saved) and one-click actions.
+- **📥 Import / Planning / Conflicts / Export** — the full loop in the browser.
+- **⚙ Manage** — add/edit **Teachers** (names + aliases + spelling fixes),
+  **Courses** (code / name / ECTS), **Groups & specializations** (cohort year range
+  + specialization labels) and **Settings** (data folder, workload targets) through
+  simple forms. **No CSV editing** — "Save & apply" writes the config and rebuilds
+  the planner. The final **⬇ Export Excel** button is always in the header.
+
+The standalone **`BookingAssistant.exe`** (Releases) needs no Python; double-click
+it and the same app opens in your browser.
+
 ## Status
 
 **Step 1 — data layer (booking requests 2026–2027)**: parses the fill-in
