@@ -1,0 +1,4 @@
+{
+  "_comment": "Copy this file to settings.json to point the app at a different data folder. Relative paths are resolved against the project root; absolute paths work too. You can also set the BA_DATA_DIR environment variable, which takes precedence. Leave settings.json out entirely to use the default ./_info.",
+  "data_dir": "_info"
+}

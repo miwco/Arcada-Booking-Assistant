@@ -1,0 +1,4 @@
+{
+  "_comment": "Copy to config/settings.json; data_dir points at your data folder.",
+  "data_dir": "_info_example"
+}

@@ -1,0 +1,37 @@
+# --- real / GDPR-sensitive data — NEVER commit -------------------------------
+# Input booking data, exports, generated planner data
+_info/
+output/
+export/
+
+# Config holding real teacher names / personal data (ship *.example versions instead)
+config/teacher_aliases.csv
+config/teacher_typos.csv
+config/workload_targets.json
+config/settings.json
+
+# Secrets (Anthropic API key etc.)
+.env
+.env.*
+!.env.example
+*.key
+
+# --- generated / transient ---------------------------------------------------
+__pycache__/
+*.pyc
+~$*          # Excel lock files
+.DS_Store
+
+# PyInstaller build artifacts (the .exe is shipped via Releases, not committed)
+build/
+dist/
+*.exe
+
+# Local machine settings + transient scan artifacts (never publish)
+.claude/settings.local.json
+.nametokens.json
+
+# Note: course_master.csv / course_code_fixes.csv hold course (not personal) data;
+# keep them, or replace with generic examples before going public.
+# Generic, shareable stand-ins are generated into config.example/ by
+# scripts/anonymise.py — those ARE committed so the public repo runs with no real data.

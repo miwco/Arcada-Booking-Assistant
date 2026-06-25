@@ -1,0 +1,67 @@
+{
+  "_README": "Planning targets and WARNING THRESHOLDS for teacher workload — NOT absolute truth. They only help flag possible problems. All hours are per ACADEMIC YEAR. Definitions: 'course-work hours' = ALL course-related work (planning, teaching, preparation, feedback, meetings, evaluation, communication, etc.); 'in-class hours' = scheduled teaching sessions only (what the calendar measures), one part of course-work. STUDENT workload (~135 h / 5 ECTS) is a different thing and is shown for reference only — do not confuse it with teacher workload. Edit any value below; absent teachers fall back to the defaults.",
+  "hours_per_ects_coursework": 20,
+  "_note_coursework": "5 ECTS ≈ 100 teacher course-work hours (20 h per ECTS).",
+  "inclass_per_ects": {
+    "warn_low": 8,
+    "normal_min": 10,
+    "normal_max": 12,
+    "warn_high": 14
+  },
+  "_note_inclass": "Per 5 ECTS: normal in-class ≈ 50–60 h, warn if < 40 h or > 70 h. Values here are PER ECTS.",
+  "student_hours_per_ects": 27,
+  "_note_student": "5 ECTS ≈ 135 h of STUDENT work (info/reference only).",
+  "yearly_coursework": {
+    "target_low": 800,
+    "target_high": 1200,
+    "working_year_hours": 1600
+  },
+  "_note_yearly": "A full working year ≈ 1600 h; a reasonable yearly COURSE-WORK target is ~800–1200 h (not in-class hours). Warn clearly below/above. Used for PLANNED bookings.",
+  "realized_booked": {
+    "target_low": 400,
+    "target_high": 800
+  },
+  "_note_realized": "REALIZED view: count BOOKED hours only (overlapping bookings count once — the longer one). Compare a teacher's booked COURSE hours to this range. Admin/meeting hours are kept separate and are NOT included in this target. No per-teacher course-work estimate is made for realized data.",
+  "teachers": {
+    "Teacher A": {
+      "fte": 1.0
+    },
+    "Teacher B": {
+      "fte": 1.0
+    },
+    "Teacher C": {
+      "fte": 1.0
+    },
+    "Teacher D": {
+      "fte": 1.0
+    },
+    "Teacher E": {
+      "fte": 1.0
+    },
+    "Teacher F": {
+      "fte": 1.0
+    },
+    "Teacher G": {
+      "fte": 1.0
+    },
+    "Teacher H": {
+      "fte": 1.0
+    },
+    "Teacher I": {
+      "fte": 1.0
+    },
+    "Teacher J": {
+      "fte": 1.0
+    },
+    "Teacher K": {
+      "fte": 1.0
+    },
+    "Teacher L": {
+      "fte": 1.0
+    },
+    "Teacher M": {
+      "fte": 1.0
+    }
+  },
+  "_note_teachers": "Per teacher you can set 'fte' (scales the default yearly target range, e.g. 0.5 -> 400–600 h) or set explicit 'yearly_low' and 'yearly_high' to override entirely."
+}
