@@ -12,7 +12,9 @@ import json
 import os
 import shutil
 
-from .dictionaries import APP_DIR, CONFIG_EXAMPLE, EXPORT_DIR, INFO, OUTPUT_DIR, cfg_path, data_dir
+from .dictionaries import (APP_DIR, BUNDLE, DATA_DIR, EXPORT_DIR, IMPORT_DIR, OUTPUT_DIR,
+                           TEMPLATES_DIR, active_cohort_years, cfg_path, data_dir,
+                           generate_group_codes, media_tracks, programs)
 
 CONFIG_DIR = os.path.join(APP_DIR, "config")
 # files seeded into a fresh install so the app works immediately and is editable
@@ -47,17 +49,34 @@ def _write_csv(name, fieldnames, rows):
 
 # ---- bootstrap: folders + seed config (first run / install) ----------------
 def bootstrap():
-    """Create the folders the workflow needs and seed an editable config/ so a
-    fresh install runs and can be managed in-app. Safe to call every start."""
-    for d in (OUTPUT_DIR, EXPORT_DIR, os.path.join(APP_DIR, "_info", "uploads")):
+    """Create the stable folders the workflow needs (all next to the app — never a
+    Temp path) and seed an editable config/ + demo data so a fresh install runs and
+    can be set up entirely in-app. Safe to call every start."""
+    for d in (DATA_DIR, IMPORT_DIR, EXPORT_DIR, TEMPLATES_DIR, OUTPUT_DIR, CONFIG_DIR,
+              os.path.join(IMPORT_DIR, "uploads")):
         os.makedirs(d, exist_ok=True)
+    # seed editable config
     for name in _SEED:
         dest = os.path.join(CONFIG_DIR, name)
         if not os.path.exists(dest):
             src = cfg_path(name)          # resolves to bundle/config or config.example
             if os.path.exists(src):
-                os.makedirs(CONFIG_DIR, exist_ok=True)
                 shutil.copyfile(src, dest)
+    # seed a stable demo data folder next to the app (so the source isn't a Temp path)
+    demo_sub = "bokningsönskemålen_2026_2027"
+    if not os.path.isdir(os.path.join(DATA_DIR, demo_sub)) \
+            and not os.path.isdir(os.path.join(APP_DIR, "_info", demo_sub)):
+        bundled = os.path.join(BUNDLE, "_info_example", demo_sub)
+        if os.path.isdir(bundled):
+            shutil.copytree(bundled, os.path.join(DATA_DIR, demo_sub))
+    # write the downloadable Excel templates
+    try:
+        from . import imports
+        imports.write_templates(TEMPLATES_DIR)
+    except Exception:
+        pass
+    return {"config_dir": CONFIG_DIR, "data_dir": data_dir(), "import_dir": IMPORT_DIR,
+            "export_dir": EXPORT_DIR, "templates_dir": TEMPLATES_DIR}
     return {"config_dir": CONFIG_DIR, "export_dir": EXPORT_DIR, "output_dir": OUTPUT_DIR}
 
 
@@ -120,6 +139,14 @@ def _settings_json():
     return {}
 
 
+def _save_settings_json(updates):
+    s = _settings_json()
+    s.update(updates)
+    with open(_writable("settings.json"), "w", encoding="utf-8") as f:
+        json.dump(s, f, ensure_ascii=False, indent=2)
+    return s
+
+
 def get_settings():
     try:
         with open(cfg_path("workload_targets.json"), encoding="utf-8-sig") as f:
@@ -129,23 +156,20 @@ def get_settings():
     s = _settings_json()
     yearly = wt.get("yearly_coursework", {})
     inclass = wt.get("inclass_per_ects", {})
+    dd = data_dir()
     return {
-        "data_dir": s.get("data_dir", os.path.relpath(data_dir(), APP_DIR) if data_dir().startswith(APP_DIR) else data_dir()),
-        "export_dir": EXPORT_DIR,
-        "output_dir": OUTPUT_DIR,
+        "data_dir": s.get("data_dir", os.path.relpath(dd, APP_DIR) if dd.startswith(APP_DIR) else dd),
+        "data_dir_full": dd, "export_dir": EXPORT_DIR, "import_dir": IMPORT_DIR,
+        "templates_dir": TEMPLATES_DIR, "output_dir": OUTPUT_DIR,
         "hours_per_ects_coursework": wt.get("hours_per_ects_coursework", 20),
         "yearly_low": yearly.get("target_low", 800),
         "yearly_high": yearly.get("target_high", 1200),
         "inclass_warn_low": inclass.get("warn_low", 8),
         "inclass_warn_high": inclass.get("warn_high", 14),
-        "cohort_year_start": int(s.get("cohort_year_start", 20)),
-        "cohort_year_end": int(s.get("cohort_year_end", 26)),
-        "specializations": s.get("specializations", SPEC_LABELS),
     }
 
 
 def set_settings(payload):
-    # workload_targets.json (merge onto existing)
     try:
         with open(cfg_path("workload_targets.json"), encoding="utf-8-sig") as f:
             wt = json.load(f)
@@ -165,16 +189,51 @@ def set_settings(payload):
         wt["inclass_per_ects"]["warn_high"] = int(payload["inclass_warn_high"])
     with open(_writable("workload_targets.json"), "w", encoding="utf-8") as f:
         json.dump(wt, f, ensure_ascii=False, indent=2)
-    # settings.json (data folder, cohorts, specializations)
+    if payload.get("data_dir"):
+        _save_settings_json({"data_dir": payload["data_dir"]})
+    return {"ok": True}
+
+
+# ---- programmes & groups ---------------------------------------------------
+def get_programs():
+    """{programs:[{code,name,active}], reference:[{code,name}], years:[...],
+    base_year, window, tracks:{...}, generated:[codes], extra:[codes]}."""
+    from .dictionaries import DEFAULT_PROGRAMS
     s = _settings_json()
-    for key in ("data_dir",):
-        if payload.get(key):
-            s[key] = payload[key]
-    for key in ("cohort_year_start", "cohort_year_end"):
-        if key in payload:
-            s[key] = int(payload[key])
-    if isinstance(payload.get("specializations"), dict):
-        s["specializations"] = payload["specializations"]
-    with open(_writable("settings.json"), "w", encoding="utf-8") as f:
-        json.dump(s, f, ensure_ascii=False, indent=2)
+    progs = s.get("programs") or dict(DEFAULT_PROGRAMS)
+    active = set(s.get("active_programs") or list(progs.keys()))
+    years = active_cohort_years()
+    base = int(s.get("active_base_year", (int(years[0]) if years else 26)))
+    return {
+        "programs": [{"code": c, "name": n, "active": c in active} for c, n in progs.items()],
+        "reference": [{"code": c, "name": n} for c, n in DEFAULT_PROGRAMS.items()],
+        "years": years, "base_year": base, "window": int(s.get("active_window", 4)),
+        "tracks": media_tracks(), "extra": s.get("extra_groups") or [],
+        "generated": sorted(generate_group_codes().keys()),
+    }
+
+
+def set_programs(payload):
+    """payload: {programs:[{code,name,active}], base_year, window, tracks:{}, extra:[]}."""
+    upd = {}
+    if isinstance(payload.get("programs"), list):
+        progs, active = {}, []
+        for p in payload["programs"]:
+            code = (p.get("code") or "").strip()
+            if not code:
+                continue
+            progs[code] = (p.get("name") or "").strip() or code
+            if p.get("active", True):
+                active.append(code)
+        upd["programs"] = progs
+        upd["active_programs"] = active
+    if "base_year" in payload:
+        upd["active_base_year"] = int(payload["base_year"]) % 100
+    if "window" in payload:
+        upd["active_window"] = max(1, int(payload["window"]))
+    if isinstance(payload.get("tracks"), dict):
+        upd["specializations"] = {k.upper()[:2]: v for k, v in payload["tracks"].items() if k.strip()}
+    if isinstance(payload.get("extra"), list):
+        upd["extra_groups"] = sorted({(g or "").strip() for g in payload["extra"] if (g or "").strip()})
+    _save_settings_json(upd)
     return {"ok": True}
