@@ -7,11 +7,13 @@ data/
 import/
 templates/
 
-# Config holding real teacher names / personal data (ship *.example versions instead)
+# Real config (course catalog + teacher data + corrections) — ship config.example/ instead
 config/teacher_aliases.csv
 config/teacher_typos.csv
 config/workload_targets.json
 config/settings.json
+config/course_master.csv
+config/course_code_fixes.csv
 
 # Secrets (Anthropic API key etc.)
 .env
@@ -34,7 +36,7 @@ dist/
 .claude/settings.local.json
 .nametokens.json
 
-# Note: course_master.csv / course_code_fixes.csv hold course (not personal) data;
-# keep them, or replace with generic examples before going public.
-# Generic, shareable stand-ins are generated into config.example/ by
-# scripts/anonymise.py — those ARE committed so the public repo runs with no real data.
+# Generic, shareable stand-ins live in config.example/ (committed) so the public
+# repo / .exe runs with no real or example-specific data.
+PROJECT.md
+ROADMAP.md

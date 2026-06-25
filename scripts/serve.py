@@ -33,7 +33,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from pipeline import ai_assist, config_store, imports        # noqa: E402
 from pipeline.apply_import import run_upload                 # noqa: E402
-from pipeline.dictionaries import APP_DIR, EXPORT_DIR, INFO, OUTPUT_DIR, data_dir  # noqa: E402
+from pipeline.dictionaries import APP_DIR, EXPORT_DIR, IMPORT_DIR, INFO, OUTPUT_DIR, data_dir  # noqa: E402
 from pipeline.exporter import export_plan                    # noqa: E402
 from pipeline.validate_import import validate_all            # noqa: E402
 
@@ -48,9 +48,8 @@ def _status():
     if os.path.exists(csv_path):
         with open(csv_path, encoding="utf-8-sig") as fh:
             n = max(0, sum(1 for _ in fh) - 1)
-    using_dummy = os.path.basename(data_dir()) == "_info_example"
     return {"ok": True, "bookings": n, "has_plan": os.path.exists(csv_path),
-            "uploads": len(_uploaded()), "data_dir": data_dir(), "using_dummy": using_dummy,
+            "uploads": len(_uploaded()), "data_dir": data_dir(),
             "export_dir": EXPORT_DIR, "ai": ai_assist.status().get("available", False),
             "teachers": len(config_store.get_teachers()), "courses": len(config_store.get_courses())}
 
@@ -112,6 +111,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._json(200, config_store.get_settings())
         if route == "/config/programs":
             return self._json(200, config_store.get_programs())
+        if route == "/config/ai":
+            return self._json(200, config_store.get_ai())
         if route.startswith("/template/"):
             kind = route.rsplit("/", 1)[-1]
             if kind in ("teachers", "courses", "groups"):
@@ -178,6 +179,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if route == "/config/programs":
                 return self._json(200, config_store.set_programs(self._body()))
 
+            if route == "/config/ai":
+                return self._json(200, config_store.set_ai(self._body()))
+
             if route in ("/import/teachers", "/import/courses", "/import/groups"):
                 raw = base64.b64decode((self._body().get("b64") or "").split(",")[-1])
                 if route.endswith("teachers"):
@@ -185,6 +189,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 if route.endswith("courses"):
                     return self._json(200, {"ok": True, **imports.parse_courses(raw)})
                 return self._json(200, {"ok": True, **imports.parse_groups(raw)})
+
+            if route == "/import/realized":
+                # keep simple for now: just store the uploaded files for later analysis
+                dest = os.path.join(IMPORT_DIR, "realized")
+                os.makedirs(dest, exist_ok=True)
+                saved = 0
+                for f in self._body().get("files", []):
+                    name = os.path.basename(f.get("name", "")).strip()
+                    if not name or name.startswith("~$"):
+                        continue
+                    with open(os.path.join(dest, name), "wb") as out:
+                        out.write(base64.b64decode((f.get("b64") or "").split(",")[-1]))
+                    saved += 1
+                return self._json(200, {"ok": True, "saved": saved, "dir": dest})
 
             if route == "/rebuild":
                 return self._json(200, _rebuild())
