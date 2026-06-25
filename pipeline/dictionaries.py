@@ -67,11 +67,25 @@ def data_dir():
                 break
     if not p:
         real = os.path.join(APP_DIR, "_info")
-        if os.path.isdir(real):
+        # only treat _info as real data if it actually holds booking workbooks —
+        # an empty _info/ (e.g. just an uploads/ folder) must not hide the dummy data
+        if os.path.isdir(os.path.join(real, "bokningsönskemålen_2026_2027")):
             return real
         dummy = os.path.join(BUNDLE, "_info_example")
         return dummy if os.path.isdir(dummy) else real
     return p if os.path.isabs(p) else os.path.join(APP_DIR, p)
+
+
+def _settings():
+    for base in (os.path.join(APP_DIR, "config"), CONFIG):
+        path = os.path.join(base, "settings.json")
+        if os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8-sig") as fh:
+                    return json.load(fh) or {}
+            except (ValueError, OSError):
+                return {}
+    return {}
 
 
 INFO = data_dir()
@@ -81,8 +95,10 @@ TEACHER_FILE = cfg_path("teacher_aliases.csv")
 TEACHER_TYPOS = cfg_path("teacher_typos.csv")
 GROUPS_SOURCE = os.path.join(INFO, "bokningsönskemålen_2026_2027", "våren_2027", "media-25-VT-2027.xlsx")
 
-SPEC_LETTERS = "FLMOP"
-COHORT_YEARS = [f"{y:02d}" for y in range(20, 27)]  # 2020-2026 cohorts
+_S = _settings()
+SPEC_LETTERS = "".join((_S.get("specializations") or {}).keys()) or "FLMOP"
+_Y0, _Y1 = int(_S.get("cohort_year_start", 20)), int(_S.get("cohort_year_end", 26))
+COHORT_YEARS = [f"{y:02d}" for y in range(_Y0, _Y1 + 1)]  # configurable cohort range
 
 
 @dataclass
@@ -197,10 +213,13 @@ def load_code_fixes():
 
 def load_groups():
     groups = {}
-    for yy in COHORT_YEARS:
+    s = _settings()                                   # honor in-app cohort/spec settings live
+    y0, y1 = int(s.get("cohort_year_start", _Y0)), int(s.get("cohort_year_end", _Y1))
+    spec_letters = "".join((s.get("specializations") or {}).keys()) or SPEC_LETTERS
+    for yy in [f"{y:02d}" for y in range(y0, y1 + 1)]:
         groups[f"Media-{yy}"] = "Film och media (hela årskursen)"
-        for s in SPEC_LETTERS:
-            groups[f"Media-{yy}-{s}"] = f"Film och media, {s}"
+        for sp in spec_letters:
+            groups[f"Media-{yy}-{sp}"] = f"Film och media, {sp}"
         groups[f"KP-{yy}"] = "Kulturproducentskap"
     try:
         wb = openpyxl.load_workbook(GROUPS_SOURCE, data_only=True, read_only=True)
