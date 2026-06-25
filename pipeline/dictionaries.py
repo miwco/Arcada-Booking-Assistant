@@ -33,8 +33,12 @@ BUNDLE = getattr(sys, "_MEIPASS", ROOT) if _FROZEN else ROOT      # read-only re
 APP_DIR = os.path.dirname(sys.executable) if _FROZEN else ROOT    # writable base
 CONFIG = os.path.join(BUNDLE, "config")
 CONFIG_EXAMPLE = os.path.join(BUNDLE, "config.example")
-OUTPUT_DIR = os.path.join(APP_DIR, "output")
-EXPORT_DIR = os.path.join(APP_DIR, "export")
+# user-facing folders, always next to the app (never a Temp path)
+OUTPUT_DIR = os.path.join(APP_DIR, "output")        # generated dashboard + planner CSV (internal)
+EXPORT_DIR = os.path.join(APP_DIR, "export")        # final booker Excel — easy to find
+IMPORT_DIR = os.path.join(APP_DIR, "import")        # drop / uploaded source files
+TEMPLATES_DIR = os.path.join(APP_DIR, "templates")  # downloadable Excel templates
+DATA_DIR = os.path.join(APP_DIR, "data")            # booking-request source workbooks
 
 
 def cfg_path(name):
@@ -66,13 +70,15 @@ def data_dir():
                     p = None
                 break
     if not p:
-        real = os.path.join(APP_DIR, "_info")
-        # only treat _info as real data if it actually holds booking workbooks —
-        # an empty _info/ (e.g. just an uploads/ folder) must not hide the dummy data
-        if os.path.isdir(os.path.join(real, "bokningsönskemålen_2026_2027")):
-            return real
+        # prefer a real data folder next to the app: _info (dev / power users) or the
+        # stable data/ folder the installed app seeds. Only counts if it actually holds
+        # booking workbooks, so an empty folder never hides the demo data.
+        for cand in ("_info", "data"):
+            full = os.path.join(APP_DIR, cand)
+            if os.path.isdir(os.path.join(full, "bokningsönskemålen_2026_2027")):
+                return full
         dummy = os.path.join(BUNDLE, "_info_example")
-        return dummy if os.path.isdir(dummy) else real
+        return dummy if os.path.isdir(dummy) else os.path.join(APP_DIR, "data")
     return p if os.path.isabs(p) else os.path.join(APP_DIR, p)
 
 
@@ -95,10 +101,40 @@ TEACHER_FILE = cfg_path("teacher_aliases.csv")
 TEACHER_TYPOS = cfg_path("teacher_typos.csv")
 GROUPS_SOURCE = os.path.join(INFO, "bokningsönskemålen_2026_2027", "våren_2027", "media-25-VT-2027.xlsx")
 
+# Arcada programmes (code -> name). The reference list, used as defaults and for the
+# "add program" dropdown. Editable in-app (stored in settings.json "programs").
+DEFAULT_PROGRAMS = {
+    "Media": "Film och media", "KP": "Kulturproducent", "FT": "Fysioterapi",
+    "SJ": "Sjukskötare", "HV": "Hälsovårdare", "BM": "Barnmorska", "FV": "Förstavård",
+    "ET": "Ergoterapi", "IT": "Informationsteknik", "IB": "International Business",
+    "FE": "Företagsekonomi",
+}
+DEFAULT_MEDIA_TRACKS = {"F": "Foto", "L": "Ljud", "M": "Manus", "O": "Online", "P": "Producing"}
+
+
+def active_cohort_years():
+    """The current intake years to plan — newest `window` cohorts (default 4). Base
+    defaults to this calendar year (autumn 2026 -> 26, giving 26/25/24/23) and rolls
+    forward automatically each year; both base and window are overridable in settings."""
+    import datetime
+    s = _settings()
+    base = int(s.get("active_base_year", datetime.datetime.now().year % 100))
+    window = max(1, int(s.get("active_window", 4)))
+    return [f"{(base - i) % 100:02d}" for i in range(window)]
+
+
+def programs():
+    s = _settings()
+    return dict(s.get("programs") or DEFAULT_PROGRAMS)
+
+
+def media_tracks():
+    return dict(_settings().get("specializations") or DEFAULT_MEDIA_TRACKS)
+
+
 _S = _settings()
-SPEC_LETTERS = "".join((_S.get("specializations") or {}).keys()) or "FLMOP"
-_Y0, _Y1 = int(_S.get("cohort_year_start", 20)), int(_S.get("cohort_year_end", 26))
-COHORT_YEARS = [f"{y:02d}" for y in range(_Y0, _Y1 + 1)]  # configurable cohort range
+SPEC_LETTERS = "".join(media_tracks().keys()) or "FLMOP"
+COHORT_YEARS = active_cohort_years()                  # newest active intake years
 
 
 @dataclass
@@ -211,16 +247,33 @@ def load_code_fixes():
     return fixes
 
 
+def generate_group_codes():
+    """All group codes for the active programmes × active intake years (CODE-YY),
+    plus Media tracks (Media-YY-F/L/…) and any manual/imported extra groups.
+    Returns {code: programme name}."""
+    s = _settings()
+    progs = programs()
+    active = set(s.get("active_programs") or progs.keys())
+    tracks = media_tracks()
+    years = active_cohort_years()
+    out = {}
+    for code, name in progs.items():
+        if code not in active:
+            continue
+        for yy in years:
+            out[f"{code}-{yy}"] = name
+            if code == "Media":
+                for t, tname in tracks.items():
+                    out[f"Media-{yy}-{t}"] = f"{name} ({tname})"
+    for g in (s.get("extra_groups") or []):
+        g = (g or "").strip()
+        if g:
+            out.setdefault(g, "(added manually)")
+    return out
+
+
 def load_groups():
-    groups = {}
-    s = _settings()                                   # honor in-app cohort/spec settings live
-    y0, y1 = int(s.get("cohort_year_start", _Y0)), int(s.get("cohort_year_end", _Y1))
-    spec_letters = "".join((s.get("specializations") or {}).keys()) or SPEC_LETTERS
-    for yy in [f"{y:02d}" for y in range(y0, y1 + 1)]:
-        groups[f"Media-{yy}"] = "Film och media (hela årskursen)"
-        for sp in spec_letters:
-            groups[f"Media-{yy}-{sp}"] = f"Film och media, {sp}"
-        groups[f"KP-{yy}"] = "Kulturproducentskap"
+    groups = generate_group_codes()
     try:
         wb = openpyxl.load_workbook(GROUPS_SOURCE, data_only=True, read_only=True)
         if "Groups" in wb.sheetnames:

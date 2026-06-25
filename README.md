@@ -25,11 +25,22 @@ demo data. The whole workflow is graphical:
   → Plan → Resolve → Export), live status (sessions loaded, teachers, courses,
   where files are saved) and one-click actions.
 - **📥 Import / Planning / Conflicts / Export** — the full loop in the browser.
-- **⚙ Manage** — add/edit **Teachers** (names + aliases + spelling fixes),
-  **Courses** (code / name / ECTS), **Groups & specializations** (cohort year range
-  + specialization labels) and **Settings** (data folder, workload targets) through
-  simple forms. **No CSV editing** — "Save & apply" writes the config and rebuilds
-  the planner. The final **⬇ Export Excel** button is always in the header.
+- **⚙ Manage** — set everything up in the app, no CSV editing:
+  - **Teachers** & **Courses** — add manually, **import from Excel** (forgiving
+    column matching: "Lärare/Namn/Teacher" all map to the name column, etc.), or
+    **download a template**. Imports are validated and previewed before saving.
+  - **Groups & programmes** — supports more than Film & Media. Pick programmes from
+    a dropdown (FT, KP, Media, SJ, HV, BM, …), add your own, or import from Excel.
+    Group codes are generated as `CODE-YY` for the **newest 4 intake years**, which
+    roll forward automatically each year (autumn 2026 → 26/25/24/23). Media keeps its
+    tracks (Media-YY-F/L/M/O/P).
+  - **Settings** — workload targets and the folder locations.
+  "Save & apply" writes the config and rebuilds the planner. The final
+  **⬇ Export Excel** button is always in the header.
+
+**Stable folders next to the app** (never a Temp path): on first run it creates
+`data/`, `import/`, `export/` (final Excel — easy to find), `templates/` and
+`config/` right beside the `.exe`, and seeds demo data so it runs immediately.
 
 The standalone **`BookingAssistant.exe`** (Releases) needs no Python; double-click
 it and the same app opens in your browser.

@@ -1,8 +1,11 @@
 # --- real / GDPR-sensitive data — NEVER commit -------------------------------
-# Input booking data, exports, generated planner data
+# Input booking data, exports, generated planner data, runtime folders
 _info/
 output/
 export/
+data/
+import/
+templates/
 
 # Config holding real teacher names / personal data (ship *.example versions instead)
 config/teacher_aliases.csv

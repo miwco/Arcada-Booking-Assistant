@@ -31,7 +31,7 @@ for _s in (sys.stdout, sys.stderr):          # be UTF-8 safe however we're launc
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from pipeline import ai_assist, config_store                # noqa: E402
+from pipeline import ai_assist, config_store, imports        # noqa: E402
 from pipeline.apply_import import run_upload                 # noqa: E402
 from pipeline.dictionaries import APP_DIR, EXPORT_DIR, INFO, OUTPUT_DIR, data_dir  # noqa: E402
 from pipeline.exporter import export_plan                    # noqa: E402
@@ -87,6 +87,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(n) or b"{}")
 
+    def _binary(self, data, filename):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self):
         route = self.path.rstrip("/")
         if route == "/uploads":
@@ -102,6 +110,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._json(200, {"courses": config_store.get_courses()})
         if route == "/config/settings":
             return self._json(200, config_store.get_settings())
+        if route == "/config/programs":
+            return self._json(200, config_store.get_programs())
+        if route.startswith("/template/"):
+            kind = route.rsplit("/", 1)[-1]
+            if kind in ("teachers", "courses", "groups"):
+                return self._binary(imports.template_bytes(kind), f"{kind[:-1]}_template.xlsx")
         return super().do_GET()
 
     def do_POST(self):
@@ -160,6 +174,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
             if route == "/config/settings":
                 return self._json(200, config_store.set_settings(self._body()))
+
+            if route == "/config/programs":
+                return self._json(200, config_store.set_programs(self._body()))
+
+            if route in ("/import/teachers", "/import/courses", "/import/groups"):
+                raw = base64.b64decode((self._body().get("b64") or "").split(",")[-1])
+                if route.endswith("teachers"):
+                    return self._json(200, {"ok": True, **imports.parse_teachers(raw)})
+                if route.endswith("courses"):
+                    return self._json(200, {"ok": True, **imports.parse_courses(raw)})
+                return self._json(200, {"ok": True, **imports.parse_groups(raw)})
 
             if route == "/rebuild":
                 return self._json(200, _rebuild())

@@ -180,6 +180,8 @@ TEMPLATE = r"""<!DOCTYPE html>
   .gtable input{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--txt);border-radius:5px;padding:5px 7px;box-sizing:border-box}
   .gtable input.sm{width:80px}
   .savebar{position:sticky;bottom:0;background:var(--bg);padding:10px 0;border-top:1px solid var(--line);margin-top:10px;display:flex;gap:8px;align-items:center}
+  a.tmpl{display:inline-block;padding:6px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--txt);text-decoration:none;font-size:13px}
+  a.tmpl:hover{border-color:var(--accent)}
   #toast.ok{background:#0f3a2c;border:1px solid var(--ok);color:#d6fbee}
 </style>
 </head>
@@ -216,6 +218,7 @@ TEMPLATE = r"""<!DOCTYPE html>
 <div id="modal"><div class="card" id="card"></div></div>
 <div id="toast"></div>
 <input type="file" id="impFile" accept=".xlsx" multiple style="display:none">
+<input type="file" id="cfgFile" accept=".xlsx" style="display:none">
 <script>
 const RAW=__DATA__, WEEKDATES=__WEEKDATES__, SPEC=__SPEC__, TEAM=new Set(__TEAM__), SLOTTIMES=__SLOTS__, TARGETS=__TARGETS__;
 const REALIZED=__REALIZED__, RYEARS=__RYEARS__; let realizedYear=RYEARS[0]||null;
@@ -1274,14 +1277,64 @@ async function renderHome(){
 /* ---- Manage (teachers / courses / groups / settings) ------------------- */
 let mtab="teachers";
 function mrow(fields,vals){return fields.map(f=>`<td><input class="${f.cls||""}" data-f="${f.f}" value="${esc(vals[f.f]||"")}" placeholder="${f.ph||""}"></td>`).join("");}
-function mgrAddRow(tbId,fields){const tb=$("#"+tbId);const tr=document.createElement("tr");
-  tr.innerHTML=mrow(fields,{})+`<td><button class="small warn" onclick="this.closest('tr').remove()">✕</button></td>`;
-  tb.appendChild(tr);const inp=tr.querySelector("input");if(inp)inp.focus();}
-function mgrCollect(tbId){return [...$("#"+tbId).querySelectorAll("tr")].map(tr=>{const o={};
-  tr.querySelectorAll("input").forEach(i=>o[i.dataset.f]=i.value.trim());return o;}).filter(o=>Object.values(o).some(v=>v));}
+function mgrAppendRow(tbId,fields,vals){const tb=$("#"+tbId);if(!tb)return;const tr=document.createElement("tr");
+  tr.innerHTML=mrow(fields,vals||{})+`<td><button class="small warn" onclick="this.closest('tr').remove()">✕</button></td>`;
+  tb.appendChild(tr);return tr;}
+function mgrAddRow(tbId,fields){const tr=mgrAppendRow(tbId,fields,{});const inp=tr&&tr.querySelector("input");if(inp)inp.focus();}
+function mgrCollect(tbId){const tb=$("#"+tbId);if(!tb)return [];
+  return [...tb.querySelectorAll("tr")].map(tr=>{const o={};
+    tr.querySelectorAll("input,select").forEach(i=>o[i.dataset.f]=(i.type==="checkbox")?i.checked:i.value.trim());
+    return o;}).filter(o=>Object.keys(o).some(k=>o[k]!==""&&o[k]!==false&&o[k]!==undefined));}
+function fileB64(f){return new Promise(res=>{const r=new FileReader();r.onload=()=>res(r.result);r.readAsDataURL(f);});}
+function impBar(kind){return `<div class="act"><button onclick="mgrImport('${kind}')">📥 Import from Excel</button>`+
+  `<a href="/template/${kind}" download class="tmpl">⬇ Download template</a></div>`;}
+let cfgImportKind=null;
+function mgrImport(kind){cfgImportKind=kind;$("#cfgFile").click();}
+async function cfgFilePicked(f){
+  if(!f)return; toast("Reading "+f.name+"…","ok");
+  let d; try{ const b64=await fileB64(f);
+    d=await (await fetch("/import/"+cfgImportKind,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({b64})})).json();
+  }catch(e){ toast("Could not read that file.","warn"); return; }
+  if(!d.ok){ toast("Import failed: "+esc(d.message||d.error||""),"warn"); return; }
+  importPreview(cfgImportKind,d);
+}
+function importPreview(kind,d){
+  const cols=Object.entries(d.matched_columns||{}).map(([k,v])=>`<span class="pill">${esc(k)} ← ${esc(v)}</span>`).join(" ")||`<span class="muted">columns guessed by position</span>`;
+  let body="",n=0;
+  if(kind==="groups"){
+    n=(d.groups||[]).length+(d.programs||[]).length;
+    body=`<div class="muted">${(d.programs||[]).length} programme(s), ${(d.groups||[]).length} group code(s).</div>`+
+      (d.programs||[]).map(p=>`<div class="ifind info"><b>${esc(p.code)}</b> ${esc(p.name||"")}</div>`).join("")+
+      (d.groups||[]).map(g=>`<div class="ifind ${g.issue?"warn":"info"}"><b>${esc(g.code)}</b> ${g.issue?`<span class="muted">— ${esc(g.issue)}</span>`:""}</div>`).join("");
+  }else{
+    const items=d.items||[]; n=items.length;
+    body=items.slice(0,200).map(it=>{const bad=it.issue;
+      const label=kind==="teachers"?`${esc(it.name)} ${it.aliases&&it.aliases.length?`<span class="muted">(${esc(it.aliases.join("; "))})</span>`:""}`
+        :`<b>${esc(it.code)}</b> ${esc(it.name||"")} ${it.ects?`<span class="muted">${esc(it.ects)} ECTS</span>`:""}`;
+      return `<div class="ifind ${bad?"warn":"info"}">${label}${bad?` <span style="color:var(--cf-room)">— ${esc(bad)}</span>`:""}</div>`;}).join("");
+  }
+  exportModal(`<h3>Review import — ${esc(kind)}</h3><div class="row muted">Detected columns: ${cols}</div>`+
+    `<div class="box" style="max-height:340px;overflow:auto">${body||"<span class='muted'>Nothing found.</span>"}</div>`+
+    `<div class="act"><button class="primary" onclick="importMerge('${kind}')">Add ${n} to the list</button><button onclick="closePopup()">Cancel</button></div>`);
+  window._imp=d;
+}
+function importMerge(kind){
+  const d=window._imp||{};
+  if(kind==="teachers")(d.items||[]).forEach(t=>{ if(!mgrCollect("tbT").some(x=>x.name.toLowerCase()===t.name.toLowerCase()))
+    mgrAppendRow("tbT",[{f:"name"},{f:"aliases"}],{name:t.name,aliases:(t.aliases||[]).join("; ")}); });
+  else if(kind==="courses")(d.items||[]).forEach(c=>{ if(!mgrCollect("tbC").some(x=>x.code.toUpperCase()===c.code.toUpperCase()))
+    mgrAppendRow("tbC",[{f:"code",cls:"sm"},{f:"name"},{f:"ects",cls:"sm"},{f:"notes"}],{code:c.code,name:c.name,ects:c.ects,notes:c.program?("programme: "+c.program):""}); });
+  else if(kind==="groups"){
+    (d.programs||[]).forEach(p=>{ if($("#tbP")&&!mgrCollect("tbP").some(x=>(x.code||"").toUpperCase()===p.code.toUpperCase()))
+      mgrAppendRow("tbP",[{f:"code",cls:"sm"},{f:"name"}],{code:p.code,name:p.name}).querySelector('td:nth-child(3)').innerHTML='<input type="checkbox" data-f="active" checked>'; });
+    (d.groups||[]).forEach(g=>{ if($("#tbX")&&!mgrCollect("tbX").some(x=>(x.code||"").toUpperCase()===g.code.toUpperCase()))
+      mgrAppendRow("tbX",[{f:"code"}],{code:g.code}); });
+  }
+  closePopup(); toast("Added — review, then Save & apply.","ok");
+}
 async function renderManage(){
   $("#view").innerHTML=`<div class="manage"><div class="mtabs">`+
-    [["teachers","👤 Teachers"],["courses","📚 Courses"],["groups","🎓 Groups & specializations"],["settings","⚙ Settings"]]
+    [["teachers","👤 Teachers"],["courses","📚 Courses"],["groups","🎓 Groups & programmes"],["settings","⚙ Settings"]]
       .map(([k,l])=>`<div class="mtab ${mtab===k?"active":""}" onclick="mtab='${k}';renderManage()">${l}</div>`).join("")+
     `</div><div id="mbody" class="muted">Loading…</div></div>`;
   try{
@@ -1295,7 +1348,8 @@ async function mgrTeachers(){
   const d=await (await fetch("/config/teachers")).json();
   const tf=[{f:"name",ph:"Full name"},{f:"aliases",ph:"nicknames; spellings"}];
   const yf=[{f:"wrong",ph:"misspelling in files"},{f:"correct",ph:"correct name"}];
-  $("#mbody").innerHTML=`<div class="muted">Your teaching team. The planner credits hours to these names; aliases catch nicknames or alternate spellings used in the Excel files.</div>`+
+  $("#mbody").innerHTML=`<div class="muted">Your teaching team. Import from an Excel file, or add manually. Aliases catch nicknames or alternate spellings used in the booking files.</div>`+
+    impBar("teachers")+
     `<table class="gtable"><thead><tr><th>Name</th><th>Aliases (optional)</th><th></th></tr></thead><tbody id="tbT">`+
       d.teachers.map(t=>`<tr>${mrow(tf,{name:t.name,aliases:(t.aliases||[]).join("; ")})}<td><button class="small warn" onclick="this.closest('tr').remove()">✕</button></td></tr>`).join("")+
     `</tbody></table><div class="act"><button onclick="mgrAddRow('tbT',[{f:'name',ph:'Full name'},{f:'aliases',ph:'nicknames; spellings'}])">+ Add teacher</button></div>`+
@@ -1308,41 +1362,72 @@ async function mgrTeachers(){
 async function mgrSaveTeachers(){
   const teachers=mgrCollect("tbT").map(o=>({name:o.name,aliases:(o.aliases||"").split(";").map(s=>s.trim()).filter(Boolean)}));
   const typos=mgrCollect("tbTy").filter(o=>o.wrong&&o.correct);
+  if(!teachers.length){toast("Add at least one teacher.","warn");return;}
   await mgrApply("/config/teachers",{teachers,typos});
 }
 async function mgrCourses(){
   const d=await (await fetch("/config/courses")).json();
   const cf=[{f:"code",cls:"sm",ph:"AS-1-044"},{f:"name",ph:"Course name"},{f:"ects",cls:"sm",ph:"5"},{f:"notes",ph:"optional"}];
-  $("#mbody").innerHTML=`<div class="muted">Courses the app knows (code → name + ECTS). ECTS drives the workload estimates.</div>`+
+  $("#mbody").innerHTML=`<div class="muted">Courses the app knows (code → name + ECTS). Import from Excel or add manually. ECTS drives the workload estimates.</div>`+
+    impBar("courses")+
     `<table class="gtable"><thead><tr><th>Code</th><th>Name</th><th>ECTS</th><th>Notes</th><th></th></tr></thead><tbody id="tbC">`+
       d.courses.map(c=>`<tr>${mrow(cf,c)}<td><button class="small warn" onclick="this.closest('tr').remove()">✕</button></td></tr>`).join("")+
     `</tbody></table><div class="act"><button onclick="mgrAddRow('tbC',[{f:'code',cls:'sm',ph:'AS-1-044'},{f:'name',ph:'Course name'},{f:'ects',cls:'sm',ph:'5'},{f:'notes',ph:'optional'}])">+ Add course</button></div>`+
     mgrSaveBar("mgrSaveCourses()");
 }
-async function mgrSaveCourses(){ await mgrApply("/config/courses",{courses:mgrCollect("tbC")}); }
+async function mgrSaveCourses(){
+  const courses=mgrCollect("tbC").filter(c=>c.code);
+  if(!courses.length){toast("Add at least one course.","warn");return;}
+  await mgrApply("/config/courses",{courses});
+}
 async function mgrGroups(){
-  const s=await (await fetch("/config/settings")).json();
-  const specs=s.specializations||{};
-  const sf=[{f:"letter",cls:"sm",ph:"F"},{f:"label",ph:"Foto"}];
-  $("#mbody").innerHTML=`<div class="muted">Student groups are generated automatically as <b>Media-YY</b> (whole year) and <b>Media-YY-X</b> per specialization, plus <b>KP-YY</b>. Set the year range and the specializations here.</div>`+
-    `<div class="act"><label>Cohort years 20<input class="sm" id="gY0" value="${esc(s.cohort_year_start)}" style="width:50px">–<input class="sm" id="gY1" value="${esc(s.cohort_year_end)}" style="width:50px"></label> <span class="muted">(e.g. 20–26 → Media-20 … Media-26)</span></div>`+
-    `<div class="step" style="font-size:14px">Specializations</div>`+
-    `<table class="gtable"><thead><tr><th>Letter</th><th>Label</th><th></th></tr></thead><tbody id="tbG">`+
-      Object.entries(specs).map(([k,v])=>`<tr>${mrow(sf,{letter:k,label:v})}<td><button class="small warn" onclick="this.closest('tr').remove()">✕</button></td></tr>`).join("")+
-    `</tbody></table><div class="act"><button onclick="mgrAddRow('tbG',[{f:'letter',cls:'sm',ph:'F'},{f:'label',ph:'Foto'}])">+ Add specialization</button></div>`+
+  const d=await (await fetch("/config/programs")).json();
+  const ref=(d.reference||[]).map(p=>`<option value="${esc(p.code)}|${esc(p.name)}">${esc(p.code)} — ${esc(p.name)}</option>`).join("");
+  const progRows=(d.programs||[]).map(p=>`<tr><td><input class="sm" data-f="code" value="${esc(p.code)}"></td>`+
+    `<td><input data-f="name" value="${esc(p.name)}"></td>`+
+    `<td style="text-align:center"><input type="checkbox" data-f="active" ${p.active?"checked":""}></td>`+
+    `<td><button class="small warn" onclick="this.closest('tr').remove()">✕</button></td></tr>`).join("");
+  const trackRows=Object.entries(d.tracks||{}).map(([k,v])=>`<tr>${mrow([{f:"letter",cls:"sm"},{f:"label"}],{letter:k,label:v})}<td><button class="small warn" onclick="this.closest('tr').remove()">✕</button></td></tr>`).join("");
+  const extraRows=(d.extra||[]).map(g=>`<tr>${mrow([{f:"code",cls:"sm"}],{code:g})}<td><button class="small warn" onclick="this.closest('tr').remove()">✕</button></td></tr>`).join("");
+  $("#mbody").innerHTML=
+    `<div class="muted">Student groups are generated as <b>CODE-YY</b> for the active programmes and intake years (e.g. <b>Media-26</b>, <b>FT-26</b>, <b>KP-26</b>). Supports more than Film &amp; Media.</div>`+
+    impBar("groups")+
+    `<div class="box"><b>Active intake years</b> <span class="muted">newest cohorts only — older years drop off automatically each year</span>`+
+      `<div class="row"><b>Newest year</b> <input class="sm" id="gBase" value="${esc(d.base_year)}"> <b style="margin-left:8px">show</b> <input class="sm" id="gWin" value="${esc(d.window)}"> <b>years</b> `+
+      `<span class="muted">→ currently <b>${(d.years||[]).join(", ")}</b></span></div></div>`+
+    `<div class="box"><b>Programmes</b> <span class="muted">tick the ones you plan; codes are generated for ticked programmes</span>`+
+      `<table class="gtable"><thead><tr><th>Code</th><th>Name</th><th>Active</th><th></th></tr></thead><tbody id="tbP">${progRows}</tbody></table>`+
+      `<div class="act"><select id="refSel"><option value="">— add from list —</option>${ref}</select>`+
+      `<button onclick="addProgFromRef()">+ Add programme</button>`+
+      `<button onclick="mgrAppendRow('tbP',[{f:'code',cls:'sm'},{f:'name'}],{}).querySelector('td:nth-child(3)').innerHTML='&lt;input type=checkbox data-f=active checked&gt;'">+ Add custom</button></div></div>`+
+    `<div class="box"><b>Media tracks</b> <span class="muted">extra Media-YY-X codes (Foto, Ljud, …)</span>`+
+      `<table class="gtable"><thead><tr><th>Letter</th><th>Label</th><th></th></tr></thead><tbody id="tbMT">${trackRows}</tbody></table>`+
+      `<div class="act"><button onclick="mgrAddRow('tbMT',[{f:'letter',cls:'sm'},{f:'label'}])">+ Add track</button></div></div>`+
+    `<div class="box"><b>Extra group codes</b> <span class="muted">any specific codes to add by hand or from Excel</span>`+
+      `<table class="gtable"><thead><tr><th>Group code</th><th></th></tr></thead><tbody id="tbX">${extraRows}</tbody></table>`+
+      `<div class="act"><button onclick="mgrAddRow('tbX',[{f:'code',cls:'sm'}])">+ Add group</button></div></div>`+
+    `<div class="box"><b>Generated group codes</b> <span class="muted">(updates after Save &amp; apply)</span>`+
+      `<div class="row" style="max-height:120px;overflow:auto">${(d.generated||[]).map(c=>`<span class="pill">${esc(c)}</span>`).join(" ")}</div></div>`+
     mgrSaveBar("mgrSaveGroups()");
 }
+function addProgFromRef(){const v=$("#refSel").value;if(!v)return;const [code,name]=v.split("|");
+  if(mgrCollect("tbP").some(x=>(x.code||"").toUpperCase()===code.toUpperCase()))return;
+  mgrAppendRow("tbP",[{f:"code",cls:"sm"},{f:"name"}],{code,name}).querySelector("td:nth-child(3)").innerHTML='<input type="checkbox" data-f="active" checked>';}
 async function mgrSaveGroups(){
-  const specs={}; mgrCollect("tbG").forEach(o=>{if(o.letter)specs[o.letter.toUpperCase().slice(0,2)]=o.label||o.letter;});
-  await mgrApply("/config/settings",{cohort_year_start:+$("#gY0").value||20,cohort_year_end:+$("#gY1").value||26,specializations:specs});
+  const programs=mgrCollect("tbP").filter(p=>p.code).map(p=>({code:p.code,name:p.name,active:p.active!==false}));
+  const tracks={}; mgrCollect("tbMT").forEach(o=>{if(o.letter)tracks[o.letter]=o.label||o.letter;});
+  const extra=mgrCollect("tbX").map(o=>o.code).filter(Boolean);
+  await mgrApply("/config/programs",{programs,tracks,extra,base_year:+$("#gBase").value||26,window:+$("#gWin").value||4});
 }
 async function mgrSettings(){
   const s=await (await fetch("/config/settings")).json();
   const fld=(id,label,val,hint)=>`<div class="row"><b>${label}</b> <input id="${id}" class="sm" value="${esc(val)}"> <span class="muted">${hint||""}</span></div>`;
   $("#mbody").innerHTML=
-    `<div class="box"><b>Folders</b>`+
-      `<div class="row"><b>Data source</b> <input id="sData" value="${esc(s.data_dir)}" style="width:260px"> <span class="muted">folder with your booking Excel (relative to the app)</span></div>`+
-      `<div class="row muted">Final Excel is written to <code>${esc(s.export_dir)}</code> (created automatically).</div></div>`+
+    `<div class="box"><b>Folders</b> <span class="muted">(all next to the app — created automatically)</span>`+
+      `<div class="row"><b>Data source</b> <input id="sData" value="${esc(s.data_dir)}" style="width:240px"> <span class="muted">${esc(s.data_dir_full||"")}</span></div>`+
+      `<div class="row"><b>📤 Export (final Excel)</b> <code>${esc(s.export_dir)}</code></div>`+
+      `<div class="row"><b>📥 Import / uploads</b> <code>${esc(s.import_dir)}</code></div>`+
+      `<div class="row"><b>📄 Templates</b> <code>${esc(s.templates_dir)}</code></div></div>`+
     `<div class="box"><b>Workload targets</b> <span class="muted">(planning guides only — used for the "possible issues" flags)</span>`+
       fld("sHpe","Hours per ECTS (course-work)",s.hours_per_ects_coursework,"5 ECTS ≈ 100 h")+
       fld("sYlo","Yearly course-work — low",s.yearly_low,"warn below")+
@@ -1390,6 +1475,7 @@ $("#resetBtn").onclick=resetConfirm;
 $("#resolveBtn").onclick=resolveAll;
 $("#helpBtn").onclick=helpModal;
 $("#impFile").onchange=e=>{impUpload(e.target.files);e.target.value="";};
+$("#cfgFile").onchange=e=>{const f=e.target.files[0];e.target.value="";cfgFilePicked(f);};
 document.addEventListener("keydown",ev=>{ if((ev.ctrlKey||ev.metaKey)&&(ev.key==="z"||ev.key==="Z")){ev.preventDefault();undo();}});
 document.addEventListener("click",e=>{const t=e.target.closest(".tlink");if(t){e.stopPropagation();openTeacher(t.dataset.t);}},true);
 $("#view").addEventListener("click",e=>{const c=e.target.closest(".ev[data-id]");if(c&&!c.classList.contains("dragging"))openPopup(c.dataset.id);});
