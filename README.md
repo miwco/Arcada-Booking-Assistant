@@ -7,12 +7,15 @@ place, no spreadsheets to edit by hand.
 
 A local app for planning course bookings:
 
-- **Import** teachers' booking Excel files (and your teachers, courses and groups).
+- **Import** the teachers' booking Excel files — the app reads the teachers,
+  courses, codes, groups and examiners straight from them and builds the lists for
+  you (you can also import or edit those lists by hand).
 - **Plan** the timetable on a weekly calendar.
 - **Resolve conflicts** — with the built-in rules, or with optional AI help.
 - **Export** the finished, conflict-free files in the official booking format.
 
-Everything runs on your own computer. Nothing is uploaded anywhere.
+Everything runs on your own computer. Nothing is uploaded anywhere. The rules the
+AI follows live in an editable `booking-assistant-rules.md` next to the app.
 
 ## Use the app (.exe — no install)
 

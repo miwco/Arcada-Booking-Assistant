@@ -29,8 +29,10 @@ import unicodedata
 
 import openpyxl
 
-from .dictionaries import INFO, ROOT, load_all
-from .normalize import clean_text, normalize_course_code, parse_comment, parse_groups
+from .dictionaries import COHORT_YEARS, INFO, ROOT, load_all
+from .normalize import clean_text, normalize_course_code, normalize_group_code, parse_comment, parse_groups
+
+GROUP_FORM = re.compile(r"^[A-Za-zÅÄÖ][A-Za-zÅÄÖ-]*-\d{2}(-[A-Za-z]{1,2})?$")  # any PROGRAMME-YY
 from .parse_requests import _COLUMN_KEYS
 
 ORIG_DIR = os.path.join(INFO, "original_bokningsönskemål_spring_2027")
@@ -170,9 +172,20 @@ def validate_course(rows, sheet, fname, owner, d, ref):
             add("groups", "warn", "no student groups given", "", "", "low")
     else:
         gs = parse_groups(groups_raw)[0]
-        bad = [g for g in gs if not GROUP_OK.match(g) and g.lower() not in ELECTIVE_GROUPS]
-        for g in bad:
-            add("groups", "warn", f"group code not in Media-YY-X / KP-YY form: {g}", groups_raw, "", "low")
+        # suggest cleaned/normalised codes (Media-2025 -> Media-25, Media-2 -> a cohort, …)
+        norm, notes = [], []
+        for g in gs:
+            nc, note = normalize_group_code(g, COHORT_YEARS)
+            norm.append(nc or g)
+            if note:
+                notes.append(note)
+        norm_str = "; ".join(dict.fromkeys(n for n in norm if n))
+        if norm_str and norm_str != "; ".join(gs):
+            add("groups", "warn", "group codes look inconsistent — normalise to " + norm_str,
+                groups_raw, norm_str, "medium")
+        for g in norm:
+            if g and not GROUP_FORM.match(g) and g.lower() not in ELECTIVE_GROUPS:
+                add("groups", "warn", f"group code not in PROGRAMME-YY form: {g}", groups_raw, "", "low")
 
     # ---- examiner (the in-sheet 'Examinator' field is authoritative) ----
     exam_sheet = _val(rows, lr.get("examiner"))

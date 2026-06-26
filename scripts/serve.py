@@ -113,6 +113,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._json(200, config_store.get_programs())
         if route == "/config/ai":
             return self._json(200, config_store.get_ai())
+        if route == "/config/rules":
+            return self._json(200, {"ok": True, "rules": config_store.get_rules(),
+                                    "path": config_store.RULES_FILE})
         if route.startswith("/template/"):
             kind = route.rsplit("/", 1)[-1]
             if kind in ("teachers", "courses", "groups"):
@@ -181,6 +184,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
             if route == "/config/ai":
                 return self._json(200, config_store.set_ai(self._body()))
+
+            if route == "/config/rules":
+                return self._json(200, config_store.set_rules(self._body().get("rules", "")))
 
             if route in ("/import/teachers", "/import/courses", "/import/groups"):
                 raw = base64.b64decode((self._body().get("b64") or "").split(",")[-1])

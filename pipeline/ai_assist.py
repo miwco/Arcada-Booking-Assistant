@@ -255,7 +255,20 @@ _SUGGEST_SYS = (
 
 
 def conflict_instructions():
-    return (_settings().get("ai_instructions") or "").strip()
+    """The editable rules file (falls back to the built-in default) + any extra
+    instructions from Settings."""
+    parts = []
+    try:
+        from . import config_store
+        rules = config_store.get_rules().strip()       # DEFAULT_RULES if no file yet
+        if rules:
+            parts.append(rules)
+    except Exception:
+        pass
+    extra = (_settings().get("ai_instructions") or "").strip()
+    if extra:
+        parts.append("Extra instructions:\n" + extra)
+    return "\n\n".join(p for p in parts if p)
 
 
 def suggest_resolution(payload):

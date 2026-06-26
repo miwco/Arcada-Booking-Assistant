@@ -1288,12 +1288,24 @@ async function impApply(){
   const r=await fetch("/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({approved})});
   const j=await r.json();
   if(!j.ok){toast("Import failed: "+(j.message||j.error||"error"),"warn");return;}
+  // new data => previous planning edits (moved/removed/approved, keyed by booking id)
+  // no longer match and would hide or misplace the freshly imported bookings. Clear them.
+  try{ localStorage.removeItem("ba_overrides_v1"); }catch(e){}
+  const gen=j.generated||{};
+  const genLine=Object.keys(gen).length
+    ? `<div class="row muted">Auto-generated from your files: `+
+      ["teachers","courses","groups"].filter(k=>gen[k]).map(k=>`${gen[k].added||0} ${k} added`+(gen[k].flagged?`, ${gen[k].flagged} to review`:"")).join(" · ")+`.</div>`
+    : "";
   exportModal(`<h3>✓ Imported into the planner</h3>`+
-    `<div class="row">${j.sessions} FM sessions`+(j.context?` + ${j.context} other-programme context`:"")+
-      ` loaded · ${approved.length} corrections applied.</div>`+
-    (j.skipped?`<div class="row muted">${j.skipped} non-FM course(s) without a team teacher were skipped.</div>`:"")+
-    `<div class="act"><button class="primary" onclick="location.reload()">Open the planner →</button></div>`);
+    `<div class="row">${j.sessions} session(s) loaded`+(j.context?` (+${j.context} context)`:"")+
+      ` across ${(j.cohorts||[]).length} cohort(s) · ${approved.length} correction(s) applied.</div>`+
+    genLine+
+    (j.skipped?`<div class="row muted">${j.skipped} row(s) could not be placed (no usable group/week) — see Manage to fix.</div>`:"")+
+    `<div class="act"><button class="primary" onclick="goPlanner()">Open the planner →</button></div>`);
 }
+function goPlanner(){ try{ localStorage.removeItem("ba_overrides_v1"); }catch(e){}
+  // cache-busting reload so the freshly generated dashboard is shown
+  location.href="/dashboard.html?t="+Date.now(); }
 
 /* ---- Home (start screen) ----------------------------------------------- */
 function go(v){document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x.dataset.view===v));view=v;render();}
@@ -1377,7 +1389,7 @@ function importMerge(kind){
   if(kind==="teachers")(d.items||[]).forEach(t=>{ if(!mgrCollect("tbT").some(x=>x.name.toLowerCase()===t.name.toLowerCase()))
     mgrAppendRow("tbT",[{f:"name"},{f:"aliases"}],{name:t.name,aliases:(t.aliases||[]).join("; ")}); });
   else if(kind==="courses")(d.items||[]).forEach(c=>{ if(!mgrCollect("tbC").some(x=>x.code.toUpperCase()===c.code.toUpperCase()))
-    mgrAppendRow("tbC",[{f:"code",cls:"sm"},{f:"name"},{f:"ects",cls:"sm"},{f:"notes"}],{code:c.code,name:c.name,ects:c.ects,notes:c.program?("programme: "+c.program):""}); });
+    mgrAppendRow("tbC",[{f:"code",cls:"sm"},{f:"name"},{f:"ects",cls:"sm"},{f:"examiner"},{f:"notes"}],{code:c.code,name:c.name,ects:c.ects,examiner:"",notes:c.program?("programme: "+c.program):""}); });
   else if(kind==="groups"){
     (d.programs||[]).forEach(p=>{ if($("#tbP")&&!mgrCollect("tbP").some(x=>(x.code||"").toUpperCase()===p.code.toUpperCase()))
       mgrAppendRow("tbP",[{f:"code",cls:"sm"},{f:"name"}],{code:p.code,name:p.name}).querySelector('td:nth-child(3)').innerHTML='<input type="checkbox" data-f="active" checked>'; });
@@ -1434,12 +1446,12 @@ async function mgrSaveTeachers(){
 }
 async function mgrCourses(){
   const d=await (await fetch("/config/courses")).json();
-  const cf=[{f:"code",cls:"sm",ph:"AS-1-044"},{f:"name",ph:"Course name"},{f:"ects",cls:"sm",ph:"5"},{f:"notes",ph:"optional"}];
-  $("#mbody").innerHTML=`<div class="muted">Courses the app knows (code → name + ECTS). Import from Excel or add manually. ECTS drives the workload estimates.</div>`+
+  const cf=[{f:"code",cls:"sm",ph:"AS-1-044"},{f:"name",ph:"Course name"},{f:"ects",cls:"sm",ph:"5"},{f:"examiner",ph:"examiner"},{f:"notes",ph:"optional"}];
+  $("#mbody").innerHTML=`<div class="muted">Courses (code → name, ECTS, examiner). Generated automatically from your imported files; import a list, or add manually. The <b>examiner</b> is the responsible teacher for each course.</div>`+
     impBar("courses")+
-    `<table class="gtable"><thead><tr><th>Code</th><th>Name</th><th>ECTS</th><th>Notes</th><th></th></tr></thead><tbody id="tbC">`+
+    `<table class="gtable"><thead><tr><th>Code</th><th>Name</th><th>ECTS</th><th>⭐ Examiner</th><th>Notes</th><th></th></tr></thead><tbody id="tbC">`+
       d.courses.map(c=>`<tr>${mrow(cf,c)}<td><button class="small warn" onclick="this.closest('tr').remove()">✕</button></td></tr>`).join("")+
-    `</tbody></table><div class="act"><button onclick="mgrAddRow('tbC',[{f:'code',cls:'sm',ph:'AS-1-044'},{f:'name',ph:'Course name'},{f:'ects',cls:'sm',ph:'5'},{f:'notes',ph:'optional'}])">+ Add course</button></div>`+
+    `</tbody></table><div class="act"><button onclick="mgrAddRow('tbC',[{f:'code',cls:'sm',ph:'AS-1-044'},{f:'name',ph:'Course name'},{f:'ects',cls:'sm',ph:'5'},{f:'examiner',ph:'examiner'},{f:'notes',ph:'optional'}])">+ Add course</button></div>`+
     mgrSaveBar("mgrSaveCourses()");
 }
 async function mgrSaveCourses(){
@@ -1487,7 +1499,7 @@ async function mgrSaveGroups(){
   await mgrApply("/config/programs",{programs,tracks,extra,base_year:+$("#gBase").value||26,window:+$("#gWin").value||4});
 }
 async function mgrSettings(){
-  const [s,ai]=await Promise.all([fetch("/config/settings").then(r=>r.json()),fetch("/config/ai").then(r=>r.json())]);
+  const [s,ai,rl]=await Promise.all([fetch("/config/settings").then(r=>r.json()),fetch("/config/ai").then(r=>r.json()),fetch("/config/rules").then(r=>r.json())]);
   const fld=(id,label,val,hint)=>`<div class="row"><b>${label}</b> <input id="${id}" class="sm" value="${esc(val)}"> <span class="muted">${hint||""}</span></div>`;
   const modelOpts=(ai.models||[]).map(m=>`<option value="${esc(m.id)}" ${m.id===ai.model?"selected":""}>${esc(m.label)}</option>`).join("");
   const rec=(ai.models||[]).map(m=>`<div class="airow"><b>${esc(m.label)}</b> <span class="muted">— ${esc(m.note)}</span></div>`).join("");
@@ -1501,6 +1513,9 @@ async function mgrSettings(){
       `<textarea id="aiInstr" rows="6" style="width:100%;box-sizing:border-box;background:var(--panel);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:7px">${esc(ai.instructions||"")}</textarea>`+
       `<div class="muted" style="margin-top:4px">For example: which groups, teachers or rooms may sometimes be double-booked · which clashes are never allowed · high-priority courses · preferred days or times.</div>`+
       `<div class="act"><button class="primary" onclick="mgrSaveAI()">💾 Save AI settings</button><span id="aisaved" class="muted"></span></div></div>`+
+    `<div class="box"><b>📜 AI rules file</b> <span class="muted">— the project rules the AI follows (group logic, conflicts, studio priority, validation, export, planning). Edit here or in <code>${esc((rl.path||"booking-assistant-rules.md"))}</code>.</span>`+
+      `<textarea id="aiRules" rows="12" style="width:100%;box-sizing:border-box;font-family:monospace;font-size:12px;background:var(--panel);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:7px">${esc(rl.rules||"")}</textarea>`+
+      `<div class="act"><button class="primary" onclick="mgrSaveRules()">💾 Save rules</button><span id="rulesaved" class="muted"></span></div></div>`+
     `<div class="box"><b>Folders</b> <span class="muted">(all next to the app — created automatically)</span>`+
       `<div class="row"><b>Data source</b> <input id="sData" value="${esc(s.data_dir)}" style="width:240px"> <span class="muted">${esc(s.data_dir_full||"")}</span></div>`+
       `<div class="row"><b>📤 Export (final Excel)</b> <code>${esc(s.export_dir)}</code></div>`+
@@ -1528,6 +1543,12 @@ async function mgrSaveAI(){
     AI=await (await fetch("/ai/status")).json(); updateSolverButtons();
     if(sv)sv.textContent=" ✓ saved"; toast("AI settings saved"+(k?" — AI is now enabled.":"."),"ok");
   }catch(e){ toast("Could not save AI settings.","warn"); if(sv)sv.textContent=""; }
+}
+async function mgrSaveRules(){
+  const sv=$("#rulesaved"); if(sv)sv.textContent=" saving…";
+  try{ await fetch("/config/rules",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rules:$("#aiRules").value})});
+    if(sv)sv.textContent=" ✓ saved"; toast("AI rules saved.","ok");
+  }catch(e){ toast("Could not save rules.","warn"); if(sv)sv.textContent=""; }
 }
 function mgrSaveBar(saveFn){
   return `<div class="savebar"><button class="primary" onclick="${saveFn}">💾 Save &amp; apply</button>`+

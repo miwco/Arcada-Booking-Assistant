@@ -172,6 +172,41 @@ def parse_groups(raw):
     return groups, notes
 
 
+def _canon_prog(p):
+    p = re.sub(r"[\s\-_]+$", "", (p or "").strip())
+    return "Media" if p.lower() == "media" else p.upper()
+
+
+def normalize_group_code(token, active_years=None):
+    """Normalize ONE group token of any programme to CODE-YY (Media keeps its -X
+    track), tolerating messy input. Returns (code, note). Examples:
+    'Media-2025'->'Media-25', 'media 25'->'Media-25', 'FT-26'->'FT-26',
+    'Media-2'->second study year mapped via the active intake years."""
+    t = clean_text(token)
+    if not t:
+        return "", ""
+    m = re.match(r"^\s*([A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö \-_]*?)[\s\-_]*?(\d{1,4})\s*[-_ ]?\s*([A-Za-zÅÄÖåäö]{1,2})?\s*$", t)
+    if not m:
+        return t, ""
+    prog = _canon_prog(m.group(1))
+    digits, spec, note = m.group(2), (m.group(3) or "").upper(), ""
+    if len(digits) >= 3:
+        yy, note = digits[-2:], "4-digit year normalized to 2-digit"
+    elif len(digits) == 2:
+        yy = digits
+    else:                                   # single digit -> study year -> cohort
+        yrs = list(active_years or [])
+        idx = int(digits) - 1
+        if 0 <= idx < len(yrs):
+            yy, note = str(yrs[idx]), f"'{t}' read as study-year {digits} -> cohort {prog}-{yrs[idx]}"
+        else:
+            return t, f"single-digit year in '{t}' could not be mapped to a cohort"
+    code = f"{prog}-{yy}"
+    if spec and prog == "Media" and spec[0] in "FLMOP":
+        code += f"-{spec[0]}"
+    return code, note
+
+
 # --------------------------------------------------------------------------- #
 # Teachers
 # --------------------------------------------------------------------------- #
