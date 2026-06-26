@@ -21,6 +21,54 @@ CONFIG_DIR = os.path.join(APP_DIR, "config")
 _SEED = ["teacher_aliases.csv", "teacher_typos.csv", "course_master.csv",
          "course_code_fixes.csv", "workload_targets.json"]
 
+# Editable, visible rules file the AI follows. Lives next to the app so the user can
+# open it in any editor; also editable in Manage → Settings.
+RULES_FILE = os.path.join(APP_DIR, "booking-assistant-rules.md")
+DEFAULT_RULES = """# Booking Assistant — rules for the AI
+
+Edit this file to tell the AI how to read the booking files and resolve conflicts.
+It is loaded automatically; you can also edit it in Manage → Settings.
+
+## Group codes
+- Codes are `PROGRAMME-YY` (two-digit intake year), e.g. `Media-26`, `KP-25`, `FT-24`.
+- `Media-YY` means the whole Media year; `Media-YY-X` is a track (F/L/M/O/P).
+- Plan only the newest ~4 intake years; older years are inactive.
+- Normalise messy input: `Media-2025` -> `Media-25`; `Media-2` means second study
+  year (map to the matching intake year); fix spacing/case.
+
+## Conflict rules
+- A clash is two courses in the SAME slot sharing a teacher, a student group, or a room.
+- Students must never be double-booked: a group clash is never allowed.
+- A teacher clash may be approved only if the booking comments allow it.
+- `Media-YY` (whole year) clashes with any of its tracks `Media-YY-X`.
+
+## Studio priority
+- Room `A211` is the film studio: treat an A211 double-booking as a hard clash that
+  needs explicit approval; prefer to move other courses out of A211 first.
+
+## Import validation
+- Expect messy data. Detect and suggest fixes for: inconsistent group codes, course
+  name/code typos, and teacher-name spelling variants.
+- Suggest corrections; never apply them without approval.
+
+## Other comments
+- Read the free-text "Other comments" cell for times ("9:15-11:45 absolut"), AM/PM
+  words, hard constraints, computer-room needs, and "may be double-booked".
+
+## Teacher / examiner
+- Teachers come from the lecturers column; the Examinator field is the responsible
+  examiner for the course and is kept by default.
+
+## Export requirements
+- Never export with unresolved (un-approved) conflicts.
+- Approved double-bookings are exported with a clear note in the comments.
+
+## Planning preferences
+- Keep a course on its requested day/time where possible.
+- Prefer mid-week days (Tue-Thu) over Mon/Fri; keep lectures near their requested week.
+- Make the smallest change that resolves a clash.
+"""
+
 
 def _read_csv(path):
     for enc in ("utf-8-sig", "cp1252"):
@@ -68,8 +116,25 @@ def bootstrap():
         imports.write_templates(TEMPLATES_DIR)
     except Exception:
         pass
+    if not os.path.exists(RULES_FILE):                 # seed the editable AI rules file
+        set_rules(DEFAULT_RULES)
     return {"config_dir": CONFIG_DIR, "data_dir": data_dir(), "import_dir": IMPORT_DIR,
             "export_dir": EXPORT_DIR, "templates_dir": TEMPLATES_DIR}
+
+
+def get_rules():
+    try:
+        with open(RULES_FILE, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return DEFAULT_RULES
+
+
+def set_rules(text):
+    os.makedirs(APP_DIR, exist_ok=True)
+    with open(RULES_FILE, "w", encoding="utf-8") as f:
+        f.write(text if text is not None else DEFAULT_RULES)
+    return {"ok": True, "path": RULES_FILE}
 
 
 # ---- teachers --------------------------------------------------------------
@@ -104,15 +169,17 @@ def set_typos(items):
 # ---- courses ---------------------------------------------------------------
 def get_courses():
     return [{"code": (r.get("code") or "").strip().upper(), "name": (r.get("name") or "").strip(),
-             "ects": (r.get("ects") or "").strip(), "notes": (r.get("notes") or "").strip()}
+             "ects": (r.get("ects") or "").strip(), "examiner": (r.get("examiner") or "").strip(),
+             "notes": (r.get("notes") or "").strip()}
             for r in _read_csv(cfg_path("course_master.csv")) if (r.get("code") or "").strip()]
 
 
 def set_courses(items):
     rows = [{"code": (it.get("code") or "").strip().upper(), "name": (it.get("name") or "").strip(),
-             "ects": str(it.get("ects") or "").strip(), "notes": (it.get("notes") or "").strip()}
+             "ects": str(it.get("ects") or "").strip(), "examiner": (it.get("examiner") or "").strip(),
+             "notes": (it.get("notes") or "").strip()}
             for it in items if (it.get("code") or "").strip()]
-    _write_csv("course_master.csv", ["code", "name", "ects", "notes"], rows)
+    _write_csv("course_master.csv", ["code", "name", "ects", "examiner", "notes"], rows)
     return {"ok": True, "count": len(rows)}
 
 

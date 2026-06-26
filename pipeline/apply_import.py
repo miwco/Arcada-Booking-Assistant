@@ -28,10 +28,13 @@ from dataclasses import asdict, fields
 
 import openpyxl
 
-from .dictionaries import EXPORT_DIR, INFO, OUTPUT_DIR, load_all
+from .dictionaries import COHORT_YEARS, EXPORT_DIR, INFO, OUTPUT_DIR, load_all
 from .exporter import _label_rows, _table
+from .normalize import normalize_group_code
 from .parse_requests import Booking, parse_all, parse_file
 from .validate_import import ELECTIVE_CODES, ELECTIVE_RE, ORIG_DIR, _xlsx, validate_all
+
+_PROG_YEAR = re.compile(r"^([A-Za-zÅÄÖ][A-Za-zÅÄÖ-]*?-\d{2})")
 
 OUT = OUTPUT_DIR
 VAL_DIR = os.path.join(EXPORT_DIR, "validated_spring_2027")
@@ -102,13 +105,19 @@ def apply_to_file(path, per_sheet):
 
 
 def cohort_of(b):
-    for g in b.groups.split("; "):
-        m = re.match(r"(Media-\d{2})", g)
-        if m:
-            return m.group(1)
-    if b.course_code in ELECTIVE_CODES or ELECTIVE_RE.search(b.groups_raw + " " + b.course_name + " " + b.groups):
+    """The cohort a booking belongs to — any programme, not just Media. Derived by
+    normalising the booking's group codes to PROG-YY (Media keeps the whole-year
+    cohort, dropping the -track). Falls back to the raw cell, then electives."""
+    for source in (b.groups or "", b.groups_raw or ""):
+        for g in re.split(r"[;,]", source):
+            norm, _ = normalize_group_code(g, COHORT_YEARS)
+            m = _PROG_YEAR.match(norm)
+            if m:
+                return m.group(1)
+    if b.course_code in ELECTIVE_CODES or ELECTIVE_RE.search(
+            (b.groups_raw or "") + " " + (b.course_name or "") + " " + (b.groups or "")):
         return "ÖppnaYH"
-    return None  # non-FM (e.g. KP-only) — out of scope for the FM planner
+    return None  # no usable group code at all
 
 
 def _semester_of(week):
@@ -140,22 +149,18 @@ def build_bookings(d, orig_dir, per_file):
         corrected = apply_to_file(path, per_sheet)
         bookings, _flags = parse_file(corrected, d)
         for b in bookings:
-            if not b.week or not b.course_code:        # skip empty/template tabs
+            if not b.week and not b.course_code:        # truly empty/template tab
                 continue
             b.semester, b.academic_year = _semester_of(b.week), SPRING_AY
             coh = cohort_of(b)
-            if coh is not None:
-                b.cohort = coh
-                out.append(b)
-                continue
-            if any(t in d.teachers for t in b.teachers.split("; ") if t):
-                is_kp = bool(re.search(r"\bKP-|kulturprod", b.groups + " " + b.groups_raw, re.I))
-                b.cohort = "KP" if is_kp else "Other"
-                b.program = "KP / Culture Producers" if is_kp else "Other programme"
-                n_ctx += 1
-                out.append(b)
-            else:
+            if coh is None:                              # has a week/code but no group
+                if not b.week:
+                    continue
                 skipped.append((base, b.sheet, b.course_code, b.groups or b.groups_raw))
+                b.cohort = "Unassigned"                  # still show it so the user can fix it
+            else:
+                b.cohort = coh
+            out.append(b)
     return out, skipped, n_ctx, applied
 
 
@@ -173,12 +178,17 @@ def _write_planner(combined):
 
 def run_upload(orig_dir, approved):
     """Import uploaded teacher files (with approved corrections) AS the planner
-    source, regenerate the dashboard, and return a summary for the UI."""
+    source: generate the teacher/course/group lists from the files, merge them into
+    the editable config, build the planner for ALL programmes found, regenerate the
+    dashboard, and return a summary for the UI."""
     d = load_all()
     bk, skipped, n_ctx, applied = build_bookings(d, orig_dir, corrections_from_list(approved))
-    _dash, n = _write_planner(bk)
+    from . import discover as _disc
+    generated = _disc.merge_into_config(_disc.discover(bk))   # auto-generate the lists
+    _dash, n = _write_planner(bk)                             # rebuild dashboard with merged config
+    cohorts = sorted({b.cohort for b in bk})
     return {"ok": True, "corrections": applied, "sessions": len(bk) - n_ctx, "context": n_ctx,
-            "skipped": len(skipped), "events": n,
+            "skipped": len(skipped), "events": n, "cohorts": cohorts, "generated": generated,
             "skipped_list": [{"code": s[2], "sheet": s[1], "groups": s[3]} for s in skipped[:25]]}
 
 
