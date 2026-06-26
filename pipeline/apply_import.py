@@ -136,32 +136,56 @@ def corrections_from_list(approved):
     return out
 
 
+def _suggest_group(raw):
+    for g in re.split(r"[;,]", raw or ""):
+        nc, _ = normalize_group_code(g, COHORT_YEARS)
+        if _PROG_YEAR.match(nc or ""):
+            return nc
+    return ""
+
+
 def build_bookings(d, orig_dir, per_file):
-    """Apply corrections to copies of the originals in `orig_dir`, parse them, and
-    return (bookings, skipped, n_context, n_applied). Cohort + semester are derived
-    per course; non-FM courses with a team teacher become context, the rest skipped."""
+    """Apply corrections to copies of the originals in `orig_dir`, parse them, derive
+    each booking's cohort, and return (bookings, skipped, n_context, n_applied, report).
+    Nothing is silently dropped: rows with a usable group get their cohort; rows with a
+    week but an unrecognised group go to an 'Unassigned' cohort and are reported."""
     os.makedirs(CORR_DIR, exist_ok=True)
     out, skipped, n_ctx, applied = [], [], 0, 0
+    n_files = rows_read = 0
+    detected, unmatched = {}, []
     for path in sorted(_xlsx(os.path.join(orig_dir, "*.xlsx"))):
+        n_files += 1
         base = os.path.basename(path)
         per_sheet = per_file.get(base, {})
         applied += sum(len(v) for v in per_sheet.values())
         corrected = apply_to_file(path, per_sheet)
         bookings, _flags = parse_file(corrected, d)
         for b in bookings:
-            if not b.week and not b.course_code:        # truly empty/template tab
+            if not b.week and not b.course_code:        # truly empty/template row
                 continue
+            rows_read += 1
             b.semester, b.academic_year = _semester_of(b.week), SPRING_AY
             coh = cohort_of(b)
-            if coh is None:                              # has a week/code but no group
+            if coh is None:
+                raw = (b.groups or b.groups_raw or "").strip()
+                reason = "no week and no group" if not b.week else \
+                    ("group not recognised" if raw else "no student group given")
+                skipped.append({"file": base, "sheet": b.sheet, "code": b.course_code,
+                                "groups": raw, "reason": reason, "suggest": _suggest_group(raw)})
                 if not b.week:
-                    continue
-                skipped.append((base, b.sheet, b.course_code, b.groups or b.groups_raw))
+                    continue                             # cannot place at all
+                if raw:
+                    unmatched.append({"sheet": b.sheet, "code": b.course_code,
+                                      "raw": raw, "suggest": _suggest_group(raw)})
                 b.cohort = "Unassigned"                  # still show it so the user can fix it
             else:
                 b.cohort = coh
+            detected[b.cohort] = detected.get(b.cohort, 0) + 1
             out.append(b)
-    return out, skipped, n_ctx, applied
+    report = {"files": n_files, "rows_read": rows_read, "bookings_created": len(out),
+              "skipped": len(skipped), "detected": detected,
+              "unmatched": unmatched[:60], "skipped_list": skipped[:60]}
+    return out, skipped, n_ctx, applied, report
 
 
 def _write_planner(combined):
@@ -182,21 +206,21 @@ def run_upload(orig_dir, approved):
     the editable config, build the planner for ALL programmes found, regenerate the
     dashboard, and return a summary for the UI."""
     d = load_all()
-    bk, skipped, n_ctx, applied = build_bookings(d, orig_dir, corrections_from_list(approved))
+    bk, skipped, n_ctx, applied, report = build_bookings(d, orig_dir, corrections_from_list(approved))
     from . import discover as _disc
     generated = _disc.merge_into_config(_disc.discover(bk))   # auto-generate the lists
     _dash, n = _write_planner(bk)                             # rebuild dashboard with merged config
     cohorts = sorted({b.cohort for b in bk})
     return {"ok": True, "corrections": applied, "sessions": len(bk) - n_ctx, "context": n_ctx,
             "skipped": len(skipped), "events": n, "cohorts": cohorts, "generated": generated,
-            "skipped_list": [{"code": s[2], "sheet": s[1], "groups": s[3]} for s in skipped[:25]]}
+            "report": report, "skipped_list": report["skipped_list"][:25]}
 
 
 def run(corrections_arg=None):
     """CLI: validated spring originals + the already-cleaned autumn files."""
     d = load_all()
     per_file = load_corrections(corrections_arg)
-    bk, skipped, n_ctx, applied = build_bookings(d, ORIG_DIR, per_file)
+    bk, skipped, n_ctx, applied, _report = build_bookings(d, ORIG_DIR, per_file)
     clean_bookings, _f = parse_all(d)
     autumn = [b for b in clean_bookings if b.semester == "autumn 2026"]
     combined = autumn + bk

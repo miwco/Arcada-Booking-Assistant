@@ -220,7 +220,7 @@ def _padkey(code: str):
 
 def load_courses():
     courses, ects, notes = {}, {}, {}
-    for row in _read_csv(COURSE_MASTER):
+    for row in _read_csv(cfg_path("course_master.csv")):   # resolve at call time, not import time
         code = clean_text(row["code"]).upper()
         if not code:
             continue
@@ -232,9 +232,10 @@ def load_courses():
 
 def load_code_fixes():
     fixes = {}
-    if not os.path.exists(COURSE_FIXES):
+    path = cfg_path("course_code_fixes.csv")
+    if not os.path.exists(path):
         return fixes
-    for row in _read_csv(COURSE_FIXES):
+    for row in _read_csv(path):
         wrong = clean_text(row["wrong_code"]).upper()
         correct = clean_text(row["correct_code"]).upper()
         if wrong and correct:
@@ -285,7 +286,7 @@ def load_groups():
 
 def load_teachers():
     alias, canon = {}, []
-    for row in _read_csv(TEACHER_FILE):
+    for row in _read_csv(cfg_path("teacher_aliases.csv")):   # resolve at call time
         name = (row.get("canonical_name") or "").strip()
         if not name:
             continue
@@ -295,8 +296,9 @@ def load_teachers():
             a = a.strip()
             if a:
                 alias[a.lower()] = name
-    if os.path.exists(TEACHER_TYPOS):
-        for row in _read_csv(TEACHER_TYPOS):
+    typos = cfg_path("teacher_typos.csv")
+    if os.path.exists(typos):
+        for row in _read_csv(typos):
             wrong = (row.get("wrong") or "").strip()
             correct = (row.get("correct") or "").strip()
             if wrong and correct:

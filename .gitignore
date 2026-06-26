@@ -40,3 +40,6 @@ dist/
 # repo / .exe runs with no real or example-specific data.
 PROJECT.md
 ROADMAP.md
+
+# Generated runtime file (created next to the app)
+booking-assistant-rules.md
