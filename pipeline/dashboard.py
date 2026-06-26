@@ -1296,11 +1296,27 @@ async function impApply(){
     ? `<div class="row muted">Auto-generated from your files: `+
       ["teachers","courses","groups"].filter(k=>gen[k]).map(k=>`${gen[k].added||0} ${k} added`+(gen[k].flagged?`, ${gen[k].flagged} to review`:"")).join(" · ")+`.</div>`
     : "";
+  const rep=j.report||{};
+  const det=Object.entries(rep.detected||{}).sort((a,b)=>b[1]-a[1])
+    .map(([c,n])=>`<span class="pill">${esc(c)}: ${n}</span>`).join(" ");
+  const unm=(rep.unmatched||[]).slice(0,20).map(u=>
+    `<div class="ifind warn"><b>${esc(u.sheet||"")}</b> ${esc(u.code||"")} — group “${esc(u.raw)}” not matched`+
+    (u.suggest?` → suggest <b style="color:var(--ok)">${esc(u.suggest)}</b>`:"")+`</div>`).join("");
+  const skp=(rep.skipped_list||[]).slice(0,20).map(s=>
+    `<div class="ifind ${(s.reason||"").includes("recognised")?"warn":"info"}">${esc(s.sheet||"")} ${esc(s.code||"")}: ${esc(s.reason||"")}`+
+    (s.groups?` <span class="muted">(groups: ${esc(s.groups)})</span>`:"")+`</div>`).join("");
+  const details=`<details style="margin-top:6px"><summary style="cursor:pointer"><b>📊 Import details</b> — rows read ${rep.rows_read||0}, bookings created ${rep.bookings_created||0}, skipped ${rep.skipped||0} (${rep.files||0} file(s))</summary>`+
+    `<div class="box"><div class="row"><b>Group codes detected:</b> ${det||"—"}</div>`+
+    (unm?`<div class="row"><b>Group codes that failed to match</b> (not dropped — placed under “Unassigned”):</div><div style="max-height:200px;overflow:auto">${unm}</div>`:"")+
+    (skp?`<div class="row muted" style="margin-top:6px">Rows needing attention:</div><div style="max-height:160px;overflow:auto">${skp}</div>`:"")+
+    `</div></details>`;
   exportModal(`<h3>✓ Imported into the planner</h3>`+
     `<div class="row">${j.sessions} session(s) loaded`+(j.context?` (+${j.context} context)`:"")+
       ` across ${(j.cohorts||[]).length} cohort(s) · ${approved.length} correction(s) applied.</div>`+
+    `<div class="row muted">Cohorts: ${(j.cohorts||[]).map(c=>esc(c)).join(", ")||"—"}</div>`+
     genLine+
-    (j.skipped?`<div class="row muted">${j.skipped} row(s) could not be placed (no usable group/week) — see Manage to fix.</div>`:"")+
+    (j.skipped?`<div class="row muted">${j.skipped} row(s) need attention (unrecognised group / no week) — shown below and under the “Unassigned” cohort.</div>`:"")+
+    details+
     `<div class="act"><button class="primary" onclick="goPlanner()">Open the planner →</button></div>`);
 }
 function goPlanner(){ try{ localStorage.removeItem("ba_overrides_v1"); }catch(e){}
