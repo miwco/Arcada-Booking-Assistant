@@ -56,6 +56,7 @@ TEMPLATE = r"""<!DOCTYPE html>
   .legend span{display:inline-flex;align-items:center;gap:6px}
   .dot{width:12px;height:12px;border-radius:3px;display:inline-block}
   .sample{display:inline-block;width:20px;height:14px;border-radius:4px;background:var(--spec-alla)}
+  #filters{position:sticky;top:var(--hdrH,84px);z-index:5;background:var(--bg);padding:6px 0}
   .filters{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;align-items:center}
   .ctab,.sf{padding:5px 11px;border-radius:6px;background:var(--panel2);cursor:pointer;border:1px solid var(--line);font-size:13px}
   .ctab.active{background:var(--panel);border-color:var(--accent);color:var(--accent);font-weight:600}
@@ -65,6 +66,8 @@ TEMPLATE = r"""<!DOCTYPE html>
   table.cal{border-collapse:collapse;width:100%;table-layout:fixed}
   table.cal th,table.cal td{border:1px solid var(--line);vertical-align:top;padding:0}
   table.cal th{background:var(--panel);font-size:12px;padding:5px}
+  /* keep the day-header row visible while scrolling weeks (planning calendar) */
+  table.cal:not(.cmp) thead th{position:sticky;top:calc(var(--hdrH,84px) + var(--filtH,40px));z-index:4}
   .wkcell{white-space:nowrap;background:var(--panel);color:var(--muted);font-size:12px;font-weight:600;width:62px;padding:5px!important;text-align:center}
   .slot{border-bottom:1px dashed var(--line);padding:4px;min-height:38px}
   .slot:last-child{border-bottom:none}
@@ -254,10 +257,15 @@ const STUDIO="A211"; // the film studio — highest-priority room conflict
 // A booking may need several rooms at once (multi-camera): "+", "&", "och" = all
 // rooms simultaneously. ",", "/", "eller" = alternatives, so we take the first.
 function roomList(raw){
-  raw=(raw||"").trim(); if(!raw) return []; const low=raw.toLowerCase();
-  if(["online","online/teams","teams","inget rum","-"].includes(low)) return [];
-  let parts = /[+&]| och /i.test(raw) ? raw.split(/\s*[+&]\s*|\s+och\s+/i)
-                                      : [raw.split(/\s*[,/]\s*|\s+eller\s+/i)[0]];
+  raw=(raw||"").trim(); if(!raw) return [];
+  // "A309 (A211, A311)" = teacher is OK with any of these but needs one -> use the
+  // primary room (before the parenthesis); the parenthetical alternatives are ignored.
+  const p=raw.indexOf("("); const primary=(p>=0?raw.slice(0,p):raw).trim();
+  const low=primary.toLowerCase();
+  if(["online","online/teams","teams","inget rum","-",""].includes(low)) return [];
+  // "+", "&", "och" = several rooms AT ONCE (e.g. A211+A210 studio + sound).
+  let parts = /[+&]| och /i.test(primary) ? primary.split(/\s*[+&]\s*|\s+och\s+/i)
+                                          : [primary.split(/\s*[,/]\s*|\s+eller\s+/i)[0]];
   return [...new Set(parts.map(p=>p.trim().toUpperCase())
     .filter(p=>p&&!["ONLINE","TEAMS","INGET RUM"].includes(p)))];
 }
@@ -412,13 +420,19 @@ const cohorts=()=>{const o=["Media-26","Media-25","Media-24","Media-23"];
   return [...new Set(RAW.map(e=>e.cohort))].sort((a,b)=>
     (o.indexOf(a)<0?9:o.indexOf(a))-(o.indexOf(b)<0?9:o.indexOf(b))||a.localeCompare(b));};
 const weekKey=w=>w>=30?w:w+100;
+function stickyTops(){ // measure the sticky header + filters so the calendar day-row sits right below them
+  const h=document.querySelector("header"), f=$("#filters"), root=document.documentElement;
+  if(h) root.style.setProperty("--hdrH",h.offsetHeight+"px");
+  root.style.setProperty("--filtH",((f&&f.offsetHeight)||0)+"px");
+}
+addEventListener("resize",stickyTops);
 
 /* ---- render ------------------------------------------------------------ */
 function render(){
   MODEL=buildModel(); OCC=buildOcc(MODEL); computeConflicts(MODEL,OCC);
   renderLegend(); renderFilters(); refreshUndo();
   const ctl=$("#controls"); if(ctl) ctl.style.display=(view==="home"||view==="manage"||view==="import")?"none":"flex";
-  updateSolverButtons();
+  updateSolverButtons(); stickyTops();
   if(view==="home") renderHome();
   else if(view==="manage") renderManage();
   else if(view==="import") renderImport();
@@ -1217,13 +1231,17 @@ async function renderImport(){
         `<button onclick="impClear()">Clear all</button></div></div>`
       : `<div class="muted" style="margin-top:8px">No files uploaded yet.</div>`);
   if(IMPVAL){
-    let nf=0,withFix=0,appr=0;
+    let nf=0,withFix=0,appr=0; const byField={};
     IMPVAL.forEach((f,fi)=>f.courses.forEach((c,ci)=>c.findings.forEach((fd,k)=>{
-      nf++; if(fd.suggested){withFix++; if(IMPAPP[fi+"|"+ci+"|"+k]==="yes")appr++;}})));
+      nf++; if(fd.suggested){withFix++; byField[fd.field]=(byField[fd.field]||0)+1; if(IMPAPP[fi+"|"+ci+"|"+k]==="yes")appr++;}})));
+    const bulk=Object.entries(byField).map(([fld,n])=>
+      `<span class="pill">${esc(fld)} (${n}): <a href="#" onclick="impBulk('${esc(fld)}','yes');return false">approve all</a> · `+
+      `<a href="#" onclick="impBulk('${esc(fld)}','no');return false">reject all</a></span>`).join(" ");
     h+=`<div class="step">2 · Review suggested corrections</div>`+
       `<div class="muted">${nf} findings · ${withFix} with a fix · `+
       `<b style="color:var(--ok)">${appr} approved</b>. `+
-      `Examiner = each course's Examinator field. Approve the fixes you trust.</div>`+
+      `Examiner = each course's Examinator field. Approve the fixes you trust — or decide in bulk:</div>`+
+      (bulk?`<div class="row" style="margin:4px 0">${bulk}</div>`:"")+
       IMPVAL.map((f,fi)=>
         `<div class="step" style="font-size:14px">📑 ${esc(f.owner||f.file)} `+
           `<span class="muted">— ${esc(f.file)}</span></div>`+
@@ -1259,6 +1277,12 @@ async function renderImport(){
   }
 }
 function impApprove(id,v){IMPAPP[id]=(IMPAPP[id]===v?undefined:v);renderImport();}
+function impBulk(field,v){ // one decision for every finding of a field (e.g. all minute fixes)
+  IMPVAL.forEach((f,fi)=>f.courses.forEach((c,ci)=>c.findings.forEach((fd,k)=>{
+    if(fd.field===field&&fd.suggested)IMPAPP[fi+"|"+ci+"|"+k]=v;})));
+  renderImport();
+  toast((v==="yes"?"Approved":"Rejected")+" all "+field+" fixes.","ok");
+}
 async function impUpload(fileList){
   const files=[...fileList].filter(f=>f.name.toLowerCase().endsWith(".xlsx"));
   if(!files.length){toast("Only .xlsx files are accepted.","warn");return;}

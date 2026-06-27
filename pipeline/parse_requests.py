@@ -277,7 +277,12 @@ def parse_file(path, d: Dictionaries):
                                  f"split '{t}' -> {', '.join(parts)}", teachers_raw, excel_row)
                         tcanon.extend(parts)
                         continue
-                tcanon.append(ct)  # known name, or unknown kept as-is (ignored)
+                    if not nz.is_probably_name(ct):  # an instruction/note, not a teacher
+                        add_flag("teachers", "warn",
+                                 f"not a teacher name — looks like a note: '{ct}' (left off the teacher list)",
+                                 teachers_raw, excel_row)
+                        continue
+                tcanon.append(ct)  # known name, or a plausible new name (kept)
 
             b = Booking(
                 **base,
