@@ -17,6 +17,8 @@ import os
 import re
 
 import openpyxl
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 from .dictionaries import APP_DIR, EXPORT_DIR, INFO, load_all
 from .normalize import clean_text, normalize_course_code
@@ -103,6 +105,86 @@ def validate(plan):
     return unresolved, warnings
 
 
+# --- self-contained per-cohort export (one course per sheet) ---------------
+SEM_FILE = {"autumn 2026": "autumn-2026", "spring 2027": "spring-2027"}
+_HEADER = [("Kurskod / Study Unit Code:", "code"),
+           ("Studieavsnittets namn / Name of study unit:", "name"),
+           ("Studentgrupper / Student groups:", "groups"),
+           ("Examinator / Examiner:", "examiner"),
+           ("Undervisningsspråk / Tuition language:", "language")]
+_TABLE_HDR = ["Veckonummer / Week", "Veckodag / Weekday", "Ggr/vecka", "Minuter / Minutes",
+              "Antal studenter", "Önskat klassrum / Room", "Undervisande lärare / Teachers",
+              "Bokningstyp / Event type", "Utbildningsprogram", "Kommentar / Comment"]
+_HDR_FILL = PatternFill("solid", fgColor="D9D9D9")
+
+
+def _export_cohort(cohort):
+    return bool(re.match(r"Media-\d{2}$", cohort or "")) or (cohort or "").lower() in ("öppnayh", "oppnayh")
+
+
+def _cohort_file(cohort):
+    return "oppnaYH" if cohort.lower() in ("öppnayh", "oppnayh") else cohort.lower()
+
+
+def _sem_file(sem):
+    return SEM_FILE.get(sem, (sem or "").replace(" ", "-").lower())
+
+
+def _int(v):
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return 9999
+
+
+def _sheet_name(name, used):
+    base = re.sub(r"[\[\]:*?/\\]", "", clean_text(name) or "Course")[:28].strip() or "Course"
+    nm, i = base, 2
+    while nm.lower() in used:
+        nm = f"{base[:26]} {i}"
+        i += 1
+    used.add(nm.lower())
+    return nm
+
+
+def _write_course_sheet(ws, code, recs):
+    first = recs[0]
+    vals = {"code": code, "name": first.get("course", ""), "groups": first.get("groups", ""),
+            "examiner": first.get("examiner", ""), "language": first.get("language", "")}
+    ws["E1"] = "Fyll i här nedan / Fill in below:"
+    ws["E1"].font = Font(italic=True, color="808080")
+    for i, (label, key) in enumerate(_HEADER):
+        r = i + 2
+        ws.cell(r, 1, label).font = Font(bold=True)
+        ws.cell(r, 5, vals[key])
+    for c, label in enumerate(_TABLE_HDR, 1):
+        cell = ws.cell(9, c, label)
+        cell.font = Font(bold=True)
+        cell.fill = _HDR_FILL
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+    row, approved = 10, 0
+    for rec in recs:
+        mins = rec.get("minutes")
+        time = SLOT_TIMES.get(rec.get("slot", ""), "")
+        dur = f"{mins} min" + (f" (kl. {time})" if time else "") if mins not in (None, "") else (f"kl. {time}" if time else "")
+        ws.cell(row, 1, rec.get("week"))
+        ws.cell(row, 2, WD_SV.get(rec.get("weekday", ""), "").upper())
+        ws.cell(row, 3, 1)
+        ws.cell(row, 4, dur)
+        ws.cell(row, 5, rec.get("num_students", ""))
+        ws.cell(row, 6, rec.get("room", ""))
+        ws.cell(row, 7, ", ".join(t for t in (rec.get("teachers") or "").split("; ") if t))
+        ws.cell(row, 8, rec.get("type") or "Lektion/Lecture")
+        ws.cell(row, 9, rec.get("programme") or "Film och media")
+        ws.cell(row, 10, _comment(rec))
+        if rec.get("approvedFlag") and rec.get("kinds"):
+            approved += 1
+        row += 1
+    for c, w in enumerate([10, 12, 8, 22, 12, 18, 28, 18, 18, 30], 1):
+        ws.column_dimensions[get_column_letter(c)].width = w
+    return len(recs), approved
+
+
 def export_plan(plan, out_dir=None, semester=None, decisions=None):
     """Write the plan into template-based Excel files. `plan` is a list of
     resolved booking records from the dashboard. `semester` (e.g. "autumn 2026"
@@ -119,79 +201,30 @@ def export_plan(plan, out_dir=None, semester=None, decisions=None):
                 "message": f"{len(unresolved)} unresolved conflict(s) — resolve or approve them, "
                            f"then export again."}
 
-    d = load_all()
-    # index plan by (cohort, semester, course_code)
-    by_key = {}
+    # group the plan -> {(cohort, semester): {course_code: [recs]}}, Film & Media only
+    by_cohort = {}
     for r in plan:
-        if r.get("external") or not r.get("placed_date"):
+        if r.get("external") or r.get("context") or not r.get("placed_date"):
             continue
-        by_key.setdefault((r["cohort"], r["semester"], r["course_code"]), []).append(r)
+        if not _export_cohort(r.get("cohort", "")):       # Media-YY + ÖppnaYH only
+            continue
+        ck = (r["cohort"], r["semester"])
+        by_cohort.setdefault(ck, {}).setdefault(r.get("course_code") or r.get("course") or "?", []).append(r)
 
+    os.makedirs(out_dir, exist_ok=True)
     files_out, total_rows, approved = [], 0, 0
-    templates = sorted(g for g in glob.glob(os.path.join(INFO, "bokningsönskemålen_2026_2027", "**", "*.xlsx"),
-                                            recursive=True) if not os.path.basename(g).startswith("~$"))
-    for tpl in templates:
-        cohort, sem, _ = _meta_from_filename(tpl)
-        if semester and sem != semester:        # only the chosen batch
-            continue
-        folder = os.path.join(out_dir, SEM_FOLDER.get(sem, "other"))
-        os.makedirs(folder, exist_ok=True)
-        wb = openpyxl.load_workbook(tpl)  # keep formatting (template copy)
-        wb._external_links = []           # drop external-workbook links (avoids Excel "repaired records")
-        sheet_rows = 0
-        for ws in wb.worksheets:
-            if ws.title in ("Groups", "Event_type"):
-                continue
-            lr = _label_rows(ws)
-            if "code" not in lr:
-                continue
-            raw_code = ws.cell(lr["code"], 5).value
-            norm, _n = normalize_course_code(raw_code)
-            canon, name, _note = d.lookup_course(norm) if norm else (None, None, "")
-            code = canon or norm
-            recs = by_key.get((cohort, sem, code), [])
-            recs.sort(key=lambda r: (r["week"], WD_ORDER.get(r.get("weekday", ""), 9),
+    for (cohort, sem), courses in sorted(by_cohort.items()):
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+        sheet_rows, used = 0, set()
+        for code, recs in sorted(courses.items()):
+            recs.sort(key=lambda r: (_int(r.get("week")), WD_ORDER.get(r.get("weekday", ""), 9),
                                      SLOT_ORDER.get(r.get("slot", ""), 9)))
-            # clean header block
-            if recs:
-                ws.cell(lr["code"], 5).value = code
-                if "name" in lr and (name or recs[0].get("course")):
-                    ws.cell(lr["name"], 5).value = name or recs[0]["course"]
-                if "groups" in lr:
-                    ws.cell(lr["groups"], 5).value = recs[0].get("groups", "")
-                if "examiner" in lr:
-                    ws.cell(lr["examiner"], 5).value = recs[0].get("examiner", "")
-            hdr, cm = _table(ws)
-            if hdr is None:
-                continue
-            # unmerge any merged ranges in the data area so every cell is writable
-            for mr in list(ws.merged_cells.ranges):
-                if mr.min_row > hdr:
-                    ws.unmerge_cells(str(mr))
-            # clear old data rows
-            for r in range(hdr + 1, ws.max_row + 1):
-                for c in range(1, ws.max_column + 1):
-                    ws.cell(r, c).value = None
-            # write one row per planned session
-            row = hdr + 1
-            for rec in recs:
-                def put(logical, value):
-                    if logical in cm:
-                        ws.cell(row, cm[logical]).value = value
-                put("week", rec["week"])
-                put("weekday", WD_SV.get(rec.get("weekday", ""), ""))
-                put("times_per_week", 1)
-                put("minutes", rec.get("minutes"))
-                put("room", rec.get("room"))
-                put("teachers", ", ".join([t for t in (rec.get("teachers") or "").split("; ") if t]))
-                put("booking_type", rec.get("type") or "Lektion/Lecture")
-                put("content", rec.get("content"))
-                put("comments", _comment(rec))
-                if rec.get("approvedFlag") and rec.get("kinds"):
-                    approved += 1
-                row += 1
-                sheet_rows += 1
-        out_path = os.path.join(folder, os.path.basename(tpl))
+            ws = wb.create_sheet(_sheet_name(recs[0].get("course") or code, used))
+            n, na = _write_course_sheet(ws, code, recs)
+            sheet_rows += n
+            approved += na
+        out_path = os.path.join(out_dir, f"{_cohort_file(cohort)}-{_sem_file(sem)}.xlsx")
         wb.save(out_path)
         wb.close()
         files_out.append({"file": os.path.relpath(out_path, APP_DIR), "rows": sheet_rows})

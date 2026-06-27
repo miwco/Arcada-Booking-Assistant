@@ -183,6 +183,9 @@ TEMPLATE = r"""<!DOCTYPE html>
   .gtable input{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--txt);border-radius:5px;padding:5px 7px;box-sizing:border-box}
   .gtable input.sm{width:80px}
   .savebar{position:sticky;bottom:0;background:var(--bg);padding:10px 0;border-top:1px solid var(--line);margin-top:10px;display:flex;gap:8px;align-items:center}
+  .bulkrow{display:flex;gap:8px;align-items:center;padding:6px 8px;margin:4px 0;background:var(--panel2);border:1px solid var(--line);border-radius:8px}
+  .bulkrow>span:first-child{min-width:160px}
+  .bulkrow button{margin-left:0}
   a.tmpl{display:inline-block;padding:6px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--txt);text-decoration:none;font-size:13px}
   a.tmpl:hover{border-color:var(--accent)}
   button:disabled{opacity:.4;cursor:not-allowed}
@@ -478,19 +481,23 @@ function renderFilters(){
     +`<span class="sep"></span><label class="chk"><input type="checkbox" id="extchk" ${showExt?'checked':''}> external</label>`;
   $("#filters").innerHTML=html+`</div>`; bindFilters();
 }
-function dayCell(evs,cohortName,wk,d){
-  const cell=evs.filter(e=>e.wd===d&&e.week===wk);
-  return `<td>`+["AM","PM"].map(u=>{
-    const inside=cell.filter(e=>unitsOf(e.slot).includes(u)).map(evChip).join("");
-    return `<div class="slot" data-cohort="${esc(cohortName)}" data-week="${wk}" data-wd="${d}" data-unit="${u}">`+
-      `<span class="sl">${u} ${SLOTTIMES[u]||""}</span>`+inside+`</div>`;}).join("")+`</td>`;
+// one AM (or PM) cell — each week is rendered as TWO table rows (an AM row and a PM
+// row) so the AM band and PM band line up across every day of the week (a day with
+// few courses no longer gets a giant PM block).
+function unitCell(evs,cohortName,wk,d,u){
+  const inside=evs.filter(e=>e.wd===d&&e.week===wk&&unitsOf(e.slot).includes(u)).map(evChip).join("");
+  return `<td><div class="slot" data-cohort="${esc(cohortName)}" data-week="${wk}" data-wd="${d}" data-unit="${u}">`+
+    `<span class="sl">${u} ${SLOTTIMES[u]||""}</span>`+inside+`</div></td>`;
 }
-function wkCell(wk){return `<td class="wkcell">W${wk}<br><span class="muted">${semFromWeek(wk).split(" ")[0]}</span></td>`;}
+function wkCell(wk,span){return `<td class="wkcell"${span?' rowspan="2"':''}>W${wk}<br><span class="muted">${semFromWeek(wk).split(" ")[0]}</span></td>`;}
 function buildGrid(evs,cohortName){
   const weeks=[...new Set(evs.map(e=>e.week))].sort((a,b)=>weekKey(a)-weekKey(b));
   if(!weeks.length) return `<p class="muted">No bookings match.</p>`;
   let html=`<table class="cal"><thead><tr><th class="wkcell">Wk</th>`+WDAYS.map(d=>`<th>${WLABEL[d]}</th>`).join("")+`</tr></thead><tbody>`;
-  for(const wk of weeks){ html+=`<tr>`+wkCell(wk)+WDAYS.map(d=>dayCell(evs,cohortName,wk,d)).join("")+`</tr>`; }
+  for(const wk of weeks){
+    html+=`<tr>`+wkCell(wk,true)+WDAYS.map(d=>unitCell(evs,cohortName,wk,d,"AM")).join("")+`</tr>`;
+    html+=`<tr>`+WDAYS.map(d=>unitCell(evs,cohortName,wk,d,"PM")).join("")+`</tr>`;
+  }
   return html+`</tbody></table>`;
 }
 // Compare: ONE shared table so each week is a single physical row — both
@@ -504,8 +511,9 @@ function buildCompareGrid(fa,ca,fb,cb){
     `<th class="cmpdiv" rowspan="2"></th><th colspan="5" style="color:var(--accent)">${esc(cb)}</th></tr>`+
     `<tr>${days}${days}</tr></thead><tbody>`;
   for(const wk of weeks){
-    html+=`<tr>`+wkCell(wk)+WDAYS.map(d=>dayCell(fa,ca,wk,d)).join("")+
-      `<td class="cmpdiv"></td>`+WDAYS.map(d=>dayCell(fb,cb,wk,d)).join("")+`</tr>`;
+    html+=`<tr>`+wkCell(wk,true)+WDAYS.map(d=>unitCell(fa,ca,wk,d,"AM")).join("")+
+      `<td class="cmpdiv" rowspan="2"></td>`+WDAYS.map(d=>unitCell(fb,cb,wk,d,"AM")).join("")+`</tr>`+
+      `<tr>`+WDAYS.map(d=>unitCell(fa,ca,wk,d,"PM")).join("")+WDAYS.map(d=>unitCell(fb,cb,wk,d,"PM")).join("")+`</tr>`;
   }
   return html+`</tbody></table></div>`;
 }
@@ -1138,6 +1146,7 @@ function buildPlanPayload(){
     id:e.id,cohort:e.cohort,semester:e.semester,week:e.week,weekday:e.wd,slot:e.slot,placed_date:e.placed_date,
     course_code:e.course_code,course:e.course,groups:e.groups,examiner:e.examiner,teachers:e.teachers,
     room:e.room,minutes:e.minutes,type:e.type,content:e.content,comments:e.comments,
+    num_students:e.num_students,language:e.language,programme:e.programme,
     state:e.state,approvedFlag:e.approvedFlag,kinds:e.kinds,
     conflictNote:(e.approvedFlag&&e.kinds.length)?conflictNote(e):"",external:false}));
 }
@@ -1235,8 +1244,9 @@ async function renderImport(){
     IMPVAL.forEach((f,fi)=>f.courses.forEach((c,ci)=>c.findings.forEach((fd,k)=>{
       nf++; if(fd.suggested){withFix++; byField[fd.field]=(byField[fd.field]||0)+1; if(IMPAPP[fi+"|"+ci+"|"+k]==="yes")appr++;}})));
     const bulk=Object.entries(byField).map(([fld,n])=>
-      `<span class="pill">${esc(fld)} (${n}): <a href="#" onclick="impBulk('${esc(fld)}','yes');return false">approve all</a> · `+
-      `<a href="#" onclick="impBulk('${esc(fld)}','no');return false">reject all</a></span>`).join(" ");
+      `<div class="bulkrow"><span><b>${esc(fld)}</b> <span class="muted">(${n})</span></span>`+
+      `<button class="small primary" onclick="impBulk('${esc(fld)}','yes')">✓ Approve all</button>`+
+      `<button class="small warn" onclick="impBulk('${esc(fld)}','no')">✗ Reject all</button></div>`).join("");
     h+=`<div class="step">2 · Review suggested corrections</div>`+
       `<div class="muted">${nf} findings · ${withFix} with a fix · `+
       `<b style="color:var(--ok)">${appr} approved</b>. `+
@@ -1344,8 +1354,8 @@ async function impApply(){
     `<div class="act"><button class="primary" onclick="goPlanner()">Open the planner →</button></div>`);
 }
 function goPlanner(){ try{ localStorage.removeItem("ba_overrides_v1"); }catch(e){}
-  // cache-busting reload so the freshly generated dashboard is shown
-  location.href="/dashboard.html?t="+Date.now(); }
+  // cache-busting reload that opens directly on the planning calendar (not Home)
+  location.href="/dashboard.html?view=calendar&t="+Date.now(); }
 
 /* ---- Home (start screen) ----------------------------------------------- */
 function go(v){document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x.dataset.view===v));view=v;render();}
@@ -1633,6 +1643,9 @@ $("#modal").addEventListener("click",e=>{if(e.target.id==="modal")closePopup();}
 // only the FM team (config/teacher_aliases.csv), not guest/visiting names
 [...TEAM].sort().forEach(t=>{const o=document.createElement("option");o.value=o.textContent=t;$("#teacher").appendChild(o);});
 fetch("/ai/status").then(r=>r.json()).then(s=>{AI=s;updateSolverButtons();}).catch(()=>{});  // optional; AI assist if a key is set
+(function(){ const v=new URLSearchParams(location.search).get("view");  // open on a specific tab (e.g. after import)
+  if(v){ const tab=[...document.querySelectorAll(".tab")].find(t=>t.dataset.view===v);
+    if(tab){ document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active")); tab.classList.add("active"); view=v; } } })();
 render();
 </script>
 </body>

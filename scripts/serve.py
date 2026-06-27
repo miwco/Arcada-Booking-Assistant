@@ -38,7 +38,7 @@ from pipeline.exporter import export_plan                    # noqa: E402
 from pipeline.validate_import import validate_all            # noqa: E402
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-UPLOAD_DIR = os.path.join(APP_DIR, "_info", "uploads")       # user uploads live next to the app (writable)
+UPLOAD_DIR = os.path.join(IMPORT_DIR, "uploads")             # uploaded booking files (under import/)
 
 
 def _status():

@@ -28,7 +28,7 @@ from dataclasses import asdict, fields
 
 import openpyxl
 
-from .dictionaries import COHORT_YEARS, EXPORT_DIR, INFO, OUTPUT_DIR, load_all
+from .dictionaries import COHORT_YEARS, EXPORT_DIR, IMPORT_DIR, INFO, OUTPUT_DIR, load_all
 from .exporter import _label_rows, _table
 from .normalize import normalize_group_code
 from .parse_requests import Booking, parse_all, parse_file
@@ -37,8 +37,10 @@ from .validate_import import ELECTIVE_CODES, ELECTIVE_RE, ORIG_DIR, _xlsx, valid
 _PROG_YEAR = re.compile(r"^([A-Za-zÅÄÖ][A-Za-zÅÄÖ-]*?-\d{2})")
 
 OUT = OUTPUT_DIR
-VAL_DIR = os.path.join(EXPORT_DIR, "validated_spring_2027")
-CORR_DIR = os.path.join(VAL_DIR, "corrected_originals")
+# the import writes corrected copies of the uploaded files as a working step — keep
+# these out of export/ (which should hold ONLY the final booker files)
+VAL_DIR = os.path.join(IMPORT_DIR, "_corrected")
+CORR_DIR = VAL_DIR
 SPRING_SEM, SPRING_AY = "spring 2027", "2026-2027"
 
 
