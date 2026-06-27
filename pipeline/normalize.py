@@ -33,6 +33,13 @@ _WEEKDAYS = {
     "Fri": ["fr", "fre", "fredag", "fri", "friday"],
 }
 _WEEKDAY_LOOKUP = {spelling: code for code, spellings in _WEEKDAYS.items() for spelling in spellings}
+# Full day spellings only (safe for range detection: "måndag till onsdag").
+_FULL_DAYS = {"måndag": "Mon", "mandag": "Mon", "tisdag": "Tue", "onsdag": "Wed",
+              "torsdag": "Thu", "fredag": "Fri", "monday": "Mon", "tuesday": "Tue",
+              "wednesday": "Wed", "thursday": "Thu", "friday": "Fri"}
+_WD_ORDER = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+_DAY_ALT = "|".join(sorted(_FULL_DAYS, key=len, reverse=True))
+_DAYRANGE_RE = re.compile(rf"\b({_DAY_ALT})\b\s*(?:till|t\.?o\.?m\.?\.?|to|[-–—])\s*\b({_DAY_ALT})\b", re.I)
 
 _DATE_RE = re.compile(r"\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})\b")
 _TIMERANGE_RE = re.compile(r"(\d{1,2}[.:]\d{2})\s*[-–]\s*(\d{1,2}[.:]\d{2})")
@@ -218,6 +225,28 @@ def split_people(raw):
     return [clean_text(p) for p in parts if clean_text(p)]
 
 
+# Phrases that mean the cell holds an instruction/note, not a teacher name —
+# e.g. "Tillsammans med Fiktivt berättande i A211" (co-scheduled with another group).
+_NOT_A_NAME = re.compile(
+    r"tillsamm|gemensam|samläs|samlas|delas|delad|\bsamma\b|\bmed\b.*\b[a-zåäö]{4,}|"
+    r"\bi\s+a\d{2,3}\b|\ba\d{3}\b|\bkl\.?\b|\bgrupp|\bsalen?\b|\bse\b|\bobs\b|together|with the",
+    re.I)
+
+
+def is_probably_name(s):
+    """True if a teacher-cell token looks like a person's name (not a note/instruction)."""
+    s = clean_text(s)
+    if not s:
+        return False
+    if _NOT_A_NAME.search(s):
+        return False
+    if len(s.split()) > 4:           # a sentence, not a name
+        return False
+    if sum(c.isdigit() for c in s):  # names don't contain digits
+        return False
+    return sum(c.isalpha() for c in s) >= 2
+
+
 # --------------------------------------------------------------------------- #
 # Weekday / minutes / week
 # --------------------------------------------------------------------------- #
@@ -230,6 +259,14 @@ def parse_weekdays(raw):
     dates = ["{:02d}.{:02d}.{}".format(int(d), int(mo), y) for d, mo, y in _DATE_RE.findall(s)]
     if dates:
         notes.append("explicit date(s) found in weekday cell")
+    # weekday RANGE, e.g. "måndag till onsdag" / "Mon-Wed" -> Mon, Tue, Wed
+    rm = _DAYRANGE_RE.search(s)
+    if rm:
+        a, b = _FULL_DAYS[rm.group(1).lower()], _FULL_DAYS[rm.group(2).lower()]
+        ia, ib = _WD_ORDER.index(a), _WD_ORDER.index(b)
+        if ia <= ib:
+            notes.append(f"weekday range '{rm.group(1)}–{rm.group(2)}' expanded to {', '.join(_WD_ORDER[ia:ib + 1])}")
+            return _WD_ORDER[ia:ib + 1], dates, notes
     codes = []
     for tok in re.split(r"[,&/]|\soch\s|\s+", s.lower()):
         tok = re.sub(r"[^a-zåäö]", "", tok)

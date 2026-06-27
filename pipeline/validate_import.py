@@ -30,7 +30,8 @@ import unicodedata
 import openpyxl
 
 from .dictionaries import COHORT_YEARS, INFO, ROOT, load_all
-from .normalize import clean_text, normalize_course_code, normalize_group_code, parse_comment, parse_groups
+from .normalize import (clean_text, is_probably_name, normalize_course_code, normalize_group_code,
+                        parse_comment, parse_groups, split_people)
 
 GROUP_FORM = re.compile(r"^[A-Za-zÅÄÖ][A-Za-zÅÄÖ-]*-\d{2}(-[A-Za-z]{1,2})?$")  # any PROGRAMME-YY
 from .parse_requests import _COLUMN_KEYS
@@ -154,7 +155,12 @@ def validate_course(rows, sheet, fname, owner, d, ref):
     for n in cnotes:
         add("course_code", "info", n, code_raw, code)
     if code and not canon:
-        add("course_code", "error", f"course code not recognized: {code}", code_raw, "", "low")
+        # only worth flagging when there's an established catalog (then it may be a typo);
+        # on a fresh import the catalog is generated FROM these codes, so don't repeat it
+        # for every course — the import summary reports "N courses added" once.
+        if len(d.courses) > 5:
+            add("course_code", "warn",
+                f"course code not in your catalog: {code} (typo? otherwise it is added)", code_raw, "", "low")
     elif canon and canon != code:
         add("course_code", "info", "code normalized to dictionary form", code_raw, canon, "high")
     if canon and cname and name_raw and cname.lower() != name_raw.lower():
@@ -197,6 +203,17 @@ def validate_course(rows, sheet, fname, owner, d, ref):
             "", hint, "low")
     elif exam_canon and exam_canon != exam_sheet:
         add("examiner", "info", "examiner name normalized to the team list", exam_sheet, exam_canon, "med")
+
+    # ---- teacher cells: flag notes/instructions written as a "teacher" ----
+    seen_notes = set()
+    for row in data:
+        for t in split_people(row["teachers"]):
+            ct = clean_text(t)
+            if ct and not is_probably_name(ct) and ct.lower() not in seen_notes:
+                seen_notes.add(ct.lower())
+                add("teachers", "warn",
+                    f"the teacher cell holds a note, not a name: '{ct}' — left off the teacher list; "
+                    f"tell the app what it means (e.g. co-scheduled with another group)", ct, "", "med")
 
     # ---- fields vs 'Other comments' (the marquee check) -----------------
     fix = None
