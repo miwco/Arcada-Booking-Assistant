@@ -82,15 +82,15 @@ TEMPLATE = r"""<!DOCTYPE html>
     border:1.5px solid rgba(0,0,0,.30);cursor:grab}
   .ev .c{font-weight:700;line-height:1.25}
   .ev .t{opacity:.85;font-size:11px;line-height:1.2}
-  .ev.ai{border-style:dashed;border-color:rgba(255,255,255,.7)}
-  .ev.cf-group{box-shadow:0 0 0 2px var(--cf-group)}
-  .ev.cf-teacher{box-shadow:0 0 0 2px var(--cf-teacher)}
-  .ev.cf-both{box-shadow:0 0 0 2px var(--cf-teacher),0 0 0 4px var(--cf-group)}
-  .ev.cf-room{box-shadow:0 0 0 2px var(--cf-room)}
-  .ev.cf-studio{box-shadow:0 0 0 2px var(--cf-studio),0 0 0 4px var(--cf-studio);animation:pulse 1.6s infinite}
+  /* AI-placed (system chose the day/time) = clearly DASHED; requested = solid */
+  .ev{border:2px solid rgba(0,0,0,.35)}
+  .ev.ai{border:2px dashed rgba(0,0,0,.72)}
+  /* EVERY conflict = a red ring; the letter pills say which kinds (T/G/R/A211) */
+  .ev.conflict{box-shadow:0 0 0 2.5px var(--cf-studio)}
+  .ev.ok{box-shadow:0 0 0 2.5px var(--ok)}
+  .cfbadges{position:absolute;top:-9px;left:-4px;display:flex;gap:2px}
+  .cfp{background:var(--cf-studio);color:#fff;font-size:8.5px;font-weight:800;border-radius:6px;padding:0 4px;border:1px solid #fff;line-height:1.55}
   @keyframes pulse{0%,100%{box-shadow:0 0 0 2px var(--cf-studio),0 0 0 4px rgba(239,68,68,.25)}50%{box-shadow:0 0 0 2px var(--cf-studio),0 0 0 5px rgba(239,68,68,.6)}}
-  .ev.soft{box-shadow:0 0 0 2px var(--cf-room);border-style:dotted}
-  .ev.ok{box-shadow:0 0 0 2px var(--ok)}
   .ev.ext{opacity:.4;filter:grayscale(.55);cursor:default}
   .ev.ctx{background-image:repeating-linear-gradient(45deg,rgba(0,0,0,.16) 0 6px,transparent 6px 12px);
     border-style:dashed;border-color:#94a3b8}
@@ -183,6 +183,10 @@ TEMPLATE = r"""<!DOCTYPE html>
   .gtable input{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--txt);border-radius:5px;padding:5px 7px;box-sizing:border-box}
   .gtable input.sm{width:80px}
   .savebar{position:sticky;bottom:0;background:var(--bg);padding:10px 0;border-top:1px solid var(--line);margin-top:10px;display:flex;gap:8px;align-items:center}
+  .mktable{width:100%;border-collapse:collapse;margin-top:6px}
+  .mktable td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:13px}
+  .mktable .mkc{width:80px;text-align:center;white-space:nowrap}
+  .mktable .mkn{font-weight:600;width:130px;white-space:nowrap}
   .bulkrow{display:flex;gap:8px;align-items:center;padding:6px 8px;margin:4px 0;background:var(--panel2);border:1px solid var(--line);border-radius:8px}
   .bulkrow>span:first-child{min-width:160px}
   .bulkrow button{margin-left:0}
@@ -336,14 +340,13 @@ function computeConflicts(model,occ){
     e.state = !e.kinds.length ? "clean" : e.approvedFlag ? "ok" : "conflict";
   }
 }
-function ringClass(e){ if(e.state==="ok") return "ok"; if(e.state!=="conflict") return "";
-  const k=e.kinds;                       // ring shows the most alarming clash; badge lists all
-  if(k.includes("studio")) return "cf-studio";   // A211 — red
-  if(k.includes("group")) return "cf-group";     // students — yellow (most important to resolve)
-  if(k.includes("teacher")) return "cf-teacher"; // pink
-  return "cf-room";}                              // orange
-function kindBadge(e){const p=[]; if(e.kinds.includes("studio"))p.push("🎬"); if(e.kinds.includes("group"))p.push("G");
-  if(e.kinds.includes("teacher"))p.push("T"); if(e.kinds.includes("room"))p.push("R"); return p.join("+");}
+function ringClass(e){ if(e.state==="ok") return "ok"; return e.state==="conflict"?"conflict":""; }
+const KIND_LETTER={group:"G",teacher:"T",room:"R",studio:"A211"};   // A211 = studio conflict
+function kindBadge(e){return ["group","studio","teacher","room"].filter(k=>e.kinds.includes(k))
+  .map(k=>KIND_LETTER[k]).join("+");}
+function kindBadges(e){ if(e.state!=="conflict"||!e.kinds||!e.kinds.length) return "";
+  return `<span class="cfbadges">`+["group","studio","teacher","room"].filter(k=>e.kinds.includes(k))
+    .map(k=>`<span class="cfp" title="${k} conflict">${KIND_LETTER[k]}</span>`).join("")+`</span>`;}
 
 /* ---- slot evaluation + auto-move (cross-week, severity-aware) ----------
    level 0 = fully clean; +1 soft room clash; +2 teacher clash (approvable).
@@ -449,12 +452,14 @@ function renderLegend(){
   $("#legend").innerHTML=`<span class="muted" style="font-weight:600">Categories:</span>`+
     Object.entries(SPEC).map(([k,v])=>`<span><i class="dot ${v[1]}"></i>${esc(v[0])}</span>`).join("")
     +`<span class="sep"></span><span class="muted" style="font-weight:600">Conflicts:</span>`
-    +`<span><i class="sample" style="background:transparent;box-shadow:0 0 0 2px var(--cf-group)"></i>Group ① (students)</span>`
-    +`<span><i class="sample" style="background:transparent;box-shadow:0 0 0 2px var(--cf-studio),0 0 0 4px var(--cf-studio)"></i>🎬 A211 studio ②</span>`
-    +`<span><i class="sample" style="background:transparent;box-shadow:0 0 0 2px var(--cf-room)"></i>Room ③</span>`
-    +`<span><i class="sample" style="background:transparent;box-shadow:0 0 0 2px var(--cf-teacher)"></i>Teacher ④ (approvable)</span>`
-    +`<span><i class="sample" style="background:transparent;box-shadow:0 0 0 2px var(--ok)"></i>OK / approved</span>`
-    +`<span><i class="sample" style="border:1.5px dashed #fff;background:transparent"></i>🤖 AI</span>`;
+    +`<span><i class="sample" style="background:transparent;box-shadow:0 0 0 2.5px var(--cf-studio)"></i>Conflict (red)</span>`
+    +`<span class="cfp" style="position:static">G</span>Group`
+    +`<span class="cfp" style="position:static">T</span>Teacher`
+    +`<span class="cfp" style="position:static">R</span>Room`
+    +`<span class="cfp" style="position:static">A211</span>Studio`
+    +`<span><i class="sample" style="background:transparent;box-shadow:0 0 0 2.5px var(--ok)"></i>OK / approved</span>`
+    +`<span class="sep"></span><span><i class="sample" style="border:2px dashed rgba(0,0,0,.72);background:var(--panel2)"></i>🤖 AI-placed (dashed)</span>`
+    +`<span><i class="sample" style="border:2px solid rgba(0,0,0,.5);background:var(--panel2)"></i>requested (solid)</span>`;
 }
 function renderFilters(){
   if(view==="conflicts"||view==="import"||view==="home"||view==="manage"){$("#filters").innerHTML="";return;}
@@ -519,10 +524,10 @@ function buildCompareGrid(fa,ca,fb,cb){
 }
 function evChip(e){
   if(e.external) return `<div class="ev ext" title="External booking (context)"><span class="badge cpu">ext</span><div class="c">${esc(short(e.course))}</div><div class="t">${esc(e.teachers)}</div></div>`;
-  const cls=ringClass(e)+(e.ai_placed?" ai":"")+(e.context?" ctx":""); const cfB=e.state==="conflict"?kindBadge(e):"";
+  const cls=ringClass(e)+(e.ai_placed?" ai":"")+(e.context?" ctx":"");
   const prog=e.context?`<span class="progtag" title="${esc(e.program)} — context only, not exported">${esc(progShort(e.program))}</span> `:"";
   return `<div class="ev ${e.spec_class} ${cls}" data-id="${e.id}" draggable="true" title="${e.context?esc(e.program)+' (context · not exported) · ':''}drag to move · click for details">`+
-    (cfB?`<span class="badge cf">${cfB}</span>`:"")+(e.state==="ok"?`<span class="badge okb">OK</span>`:"")+
+    kindBadges(e)+(e.state==="ok"?`<span class="badge okb">OK</span>`:"")+
     (e.ai_placed?`<span class="badge ai">AI</span>`:"")+(e.moved?`<span class="badge mv">moved</span>`:"")+
     (e.needs_computer?`<span class="badge cpu">🖥</span>`:"")+
     `<div class="c">${prog}${esc(short(e.course))}</div><div class="t">${esc(e.tlist.map(first).join(", "))}${e.room?" · "+esc(e.room):""}</div></div>`;
@@ -824,11 +829,22 @@ function helpModal(){curPopup=null;
     `<div class="row muted">• <b>Click</b> a lecture for details and actions: move, auto-resolve a conflict, change room, remove a teacher, remove the whole lecture, or approve/keep a conflict.</div>`+
     `<div class="row muted">• A <b>full-day</b> lecture shows in both AM and PM and moves as one.</div></div>`+
     `<div class="box"><b>Markers</b>`+
-    `<div class="row"><span class="badge ai" style="position:static">AI</span> / dashed border — <span class="muted">placed by the system (no specific day/time requested). Solid border = teacher requested it.</span></div>`+
-    `<div class="row"><span class="badge mv" style="position:static">moved</span> — <span class="muted">you moved it away from the imported slot (gone if you put it back).</span></div>`+
-    `<div class="row"><b>T</b> (pink ring) teacher clash · <b>G</b> (yellow) group clash · <b>G+T</b> both · <b>🎬</b> (red pulse) A211 film-studio clash (hard) · <b>R</b> (dotted orange) minor room clash.</div>`+
-    `<div class="row"><span class="badge okb" style="position:static">OK</span> — <span class="muted">a conflict you approved/kept on purpose (e.g. a large teaching team).</span></div>`+
-    `<div class="row">🖥 <span class="muted">computer room needed.</span></div></div>`+
+    `<table class="mktable">`+
+    [["<span class='sample' style='border:2px dashed rgba(0,0,0,.72);background:var(--panel2);width:26px'></span> <span class='badge ai' style='position:static'>AI</span>",
+      "Dashed border / AI badge","The system chose the day &amp; time (the teacher didn't specify one)."],
+     ["<span class='sample' style='border:2px solid rgba(0,0,0,.5);background:var(--panel2);width:26px'></span>",
+      "Solid border","The teacher requested this exact day &amp; time."],
+     ["<span class='badge mv' style='position:static'>moved</span>","Moved","You moved it from its imported slot (clears if you put it back)."],
+     ["<span class='sample' style='box-shadow:0 0 0 2.5px var(--cf-studio);background:transparent;width:22px'></span>",
+      "Red ring","A conflict — two courses in the same slot. The letters say which kind(s)."],
+     ["<span class='cfp' style='position:static'>G</span>","G — Group","The same student group is double-booked (never allowed)."],
+     ["<span class='cfp' style='position:static'>T</span>","T — Teacher","The same teacher is double-booked (can be approved if intended)."],
+     ["<span class='cfp' style='position:static'>R</span>","R — Room","The same room is booked twice."],
+     ["<span class='cfp' style='position:static'>A211</span>","A211 — Studio","Two courses in the film studio A211 at once (needs a decision)."],
+     ["<span class='badge okb' style='position:static'>OK</span>","OK","A conflict you approved / chose to keep."],
+     ["🖥","Computer","A computer room is needed."]]
+      .map(m=>`<tr><td class="mkc">${m[0]}</td><td class="mkn">${m[1]}</td><td class="muted">${m[2]}</td></tr>`).join("")+
+    `</table></div>`+
     `<div class="box"><b>Filters & tools</b><div class="row muted">Cohort tabs · All / Film / Online + specialization toggles · semester · teacher · search · "show external". Undo = Ctrl+Z. The other tabs cover side-by-side compare, teacher workload, realized (past-year) bookings, and a conflicts list.</div></div>`+
     `<div class="box"><b>Trust</b><div class="row muted">Export shows a <b>review summary</b> of every change first and saves a <b>decision log</b> next to the files. The AI only suggests (with reason + confidence + source); you approve and the planner applies. Hard rules stay enforced on write.</div></div>`+
     `<div class="act"><button class="primary" onclick="closePopup()">Got it</button><button onclick="rulesModal()">🧠 Learned rules</button></div>`;
