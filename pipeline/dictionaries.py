@@ -118,6 +118,13 @@ def active_cohort_years():
     return [f"{(base - i) % 100:02d}" for i in range(window)]
 
 
+def current_academic_year():
+    """e.g. '2026-2027' from the newest active intake year."""
+    yrs = active_cohort_years()
+    base = int(yrs[0]) if yrs else datetime.datetime.now().year % 100
+    return f"20{base:02d}-20{base + 1:02d}"
+
+
 def programs():
     s = _settings()
     return dict(s.get("programs") or DEFAULT_PROGRAMS)

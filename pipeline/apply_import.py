@@ -202,20 +202,27 @@ def _write_planner(combined):
     return gen_dashboard(os.path.join(OUT, "bookings_2026_2027.csv"))
 
 
-def run_upload(orig_dir, approved):
+def run_upload(orig_dir, approved, programme=None, year=None):
     """Import uploaded teacher files (with approved corrections) AS the planner
     source: generate the teacher/course/group lists from the files, merge them into
-    the editable config, build the planner for ALL programmes found, regenerate the
+    the editable config, build the planner for ALL programmes found, save it as the
+    session (academic year + programme; overwrites an existing one), regenerate the
     dashboard, and return a summary for the UI."""
+    from .dictionaries import current_academic_year
+    from . import discover as _disc, sessions as _sess
+    programme = (programme or "Media").strip() or "Media"
+    year = (year or current_academic_year()).strip()
     d = load_all()
     bk, skipped, n_ctx, applied, report = build_bookings(d, orig_dir, corrections_from_list(approved))
-    from . import discover as _disc
     generated = _disc.merge_into_config(_disc.discover(bk))   # auto-generate the lists
-    _dash, n = _write_planner(bk)                             # rebuild dashboard with merged config
+    _sess.save(programme, year, bk)                           # store as / overwrite the session
+    _sess.set_active(programme, year)
+    _dash, n = _write_planner(bk)                             # rebuild dashboard (embeds active session)
     cohorts = sorted({b.cohort for b in bk})
     return {"ok": True, "corrections": applied, "sessions": len(bk) - n_ctx, "context": n_ctx,
             "skipped": len(skipped), "events": n, "cohorts": cohorts, "generated": generated,
-            "report": report, "skipped_list": report["skipped_list"][:25]}
+            "report": report, "programme": programme, "year": year,
+            "skipped_list": report["skipped_list"][:25]}
 
 
 def run(corrections_arg=None):

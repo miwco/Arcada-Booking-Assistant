@@ -68,7 +68,14 @@ TEMPLATE = r"""<!DOCTYPE html>
   table.cal th{background:var(--panel);font-size:12px;padding:5px}
   /* keep the day-header row visible while scrolling weeks (planning calendar) */
   table.cal:not(.cmp) thead th{position:sticky;top:calc(var(--hdrH,84px) + var(--filtH,40px));z-index:4}
-  .wkcell{white-space:nowrap;background:var(--panel);color:var(--muted);font-size:12px;font-weight:600;width:62px;padding:5px!important;text-align:center}
+  .wkcell{white-space:nowrap;background:var(--panel);color:var(--muted);font-size:12px;font-weight:600;width:66px;padding:5px!important;text-align:center}
+  .wkcell.prodweek{border-left:4px solid #a855f7}
+  .prodlabel{color:#c084fc;font-weight:700;font-size:9px}
+  td.holcell{background:repeating-linear-gradient(45deg,rgba(239,68,68,.12) 0 8px,transparent 8px 16px)}
+  .holtag{color:var(--cf-studio);font-weight:700;font-size:10px}
+  .sessionsel{display:inline-flex;align-items:center;gap:5px}
+  .sessionsel select{padding:3px 6px;background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:5px}
+  .badge.hol{bottom:-7px;left:-5px;background:#fff;color:#b91c1c;border:1px solid #b91c1c}
   .slot{border-bottom:1px dashed var(--line);padding:4px;min-height:38px}
   .slot:last-child{border-bottom:none}
   .slot .sl{font-size:9px;color:var(--muted);letter-spacing:.04em}
@@ -235,6 +242,7 @@ TEMPLATE = r"""<!DOCTYPE html>
 <script>
 const RAW=__DATA__, WEEKDATES=__WEEKDATES__, SPEC=__SPEC__, TEAM=new Set(__TEAM__), SLOTTIMES=__SLOTS__, TARGETS=__TARGETS__;
 const REALIZED=__REALIZED__, RYEARS=__RYEARS__; let realizedYear=RYEARS[0]||null;
+const HOLIDAYS=__HOLIDAYS__, SESSION=__SESSION__; let PRODPERIODS=__PRODPERIODS__;
 const WDAYS=["Mon","Tue","Wed","Thu","Fri"];
 const WLABEL={Mon:"Må",Tue:"Ti",Wed:"On",Thu:"To",Fri:"Fr"};
 const SPECF=[["F","Foto"],["L","Ljud"],["M","Manus"],["O","Online"],["P","Prod"]];
@@ -461,6 +469,45 @@ function renderLegend(){
     +`<span class="sep"></span><span><i class="sample" style="border:2px dashed rgba(0,0,0,.72);background:var(--panel2)"></i>🤖 AI-placed (dashed)</span>`
     +`<span><i class="sample" style="border:2px solid rgba(0,0,0,.5);background:var(--panel2)"></i>requested (solid)</span>`;
 }
+/* ---- sessions (academic year + programme) + production periods ---------- */
+function yearOpts(){ const cur=(SESSION&&SESSION.year)||"2026-2027"; const b=parseInt(cur.slice(2,4))||26; let o="";
+  for(let y=b-3;y<=b+1;y++){ const v="20"+String(y).padStart(2,"0")+"-20"+String(y+1).padStart(2,"0"); o+=`<option ${v===cur?"selected":""}>${v}</option>`; } return o; }
+function sessionSelector(){
+  const s=SESSION||{}; const list=s.list||[];
+  const years=[...new Set(list.map(x=>x.year).concat(s.year?[s.year]:[]))].filter(Boolean).sort();
+  const progs=[...new Set(list.map(x=>x.programme).concat(s.programme?[s.programme]:[]))].filter(Boolean);
+  return `<span class="sessionsel"><b>Session:</b> `+
+    `<select id="selProg" onchange="switchSession()">`+progs.map(p=>`<option ${p===s.programme?"selected":""}>${esc(p)}</option>`).join("")+`</select> `+
+    `<select id="selYear" onchange="switchSession()">`+years.map(y=>`<option ${y===s.year?"selected":""}>${esc(y)}</option>`).join("")+`</select> `+
+    `<button class="small" onclick="prodPeriodsModal()" title="Mark production periods">🎬 Periods</button></span><span class="sep"></span>`;
+}
+function switchSession(){ const p=$("#selProg").value,y=$("#selYear").value;
+  if(p===SESSION.programme&&y===SESSION.year) return;
+  if(!(SESSION.list||[]).some(s=>s.programme===p&&s.year===y)){ toast("No saved session for "+p+" "+y+" — import that batch first.","warn"); render(); return; }
+  toast("Loading "+p+" "+y+"…","ok");
+  fetch("/session/select",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({programme:p,year:y})})
+    .then(()=>{try{localStorage.removeItem("ba_overrides_v1");}catch(e){} location.href="/dashboard.html?view="+view+"&t="+Date.now();});
+}
+function ppRow(p){p=p||{};return `<tr><td><input data-f="name" value="${esc(p.name||"")}" placeholder="Spring production"></td>`+
+  `<td><input type="date" data-f="start" value="${esc(p.start||"")}"></td>`+
+  `<td><input type="date" data-f="end" value="${esc(p.end||"")}"></td>`+
+  `<td><button class="small warn" onclick="this.closest('tr').remove()">✕</button></td></tr>`;}
+function prodPeriodsModal(){ curPopup=null;
+  if(!SESSION||!SESSION.year){ toast("Import a batch first to create a session.","warn"); return; }
+  $("#card").innerHTML=`<span class="x" onclick="closePopup()">×</span><h3>🎬 Production periods</h3>`+
+    `<div class="row muted">Weeks when students are making their productions — highlighted in the calendar. Add as many as you like (e.g. a longer one in spring, a shorter one in autumn). Session: <b>${esc(SESSION.programme)} ${esc(SESSION.year)}</b>.</div>`+
+    `<table class="gtable"><thead><tr><th>Name</th><th>Start</th><th>End</th><th></th></tr></thead><tbody id="tbPP">${(PRODPERIODS||[]).map(ppRow).join("")}</tbody></table>`+
+    `<div class="act"><button onclick="$('#tbPP').insertAdjacentHTML('beforeend',ppRow({}))">+ Add period</button></div>`+
+    `<div class="act"><button class="primary" onclick="savePeriods()">💾 Save &amp; show</button><button onclick="closePopup()">Cancel</button></div>`;
+  $("#modal").classList.add("open");
+}
+async function savePeriods(){
+  const periods=[...$("#tbPP").querySelectorAll("tr")].map(tr=>{const o={};tr.querySelectorAll("input").forEach(i=>o[i.dataset.f]=i.value);return o;})
+    .filter(p=>p.name&&p.start&&p.end);
+  toast("Saving production periods…","ok");
+  try{ await fetch("/session/periods",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({periods})}); }catch(e){}
+  location.href="/dashboard.html?view="+view+"&t="+Date.now();
+}
 function renderFilters(){
   if(view==="conflicts"||view==="import"||view==="home"||view==="manage"){$("#filters").innerHTML="";return;}
   if(view==="realized"){
@@ -477,7 +524,7 @@ function renderFilters(){
   }
   const pAll=specSel.size===5, pFilm=specSel.size===4&&!specSel.has("O")&&["F","L","M","P"].every(s=>specSel.has(s)),
         pOnline=specSel.size===1&&specSel.has("O");
-  let html=`<div class="filters">`;
+  let html=`<div class="filters">`+sessionSelector();
   if(view==="calendar") html+=cohorts().map(c=>`<div class="ctab ${c===cohort?'active':''}" data-c="${esc(c)}">${esc(c)}</div>`).join("")+`<span class="sep"></span>`;
   html+=`<div class="sf preset ${pAll?'active':''}" data-main="all">All</div>`
     +`<div class="sf preset ${pFilm?'active':''}" data-main="film">Film</div>`
@@ -486,15 +533,22 @@ function renderFilters(){
     +`<span class="sep"></span><label class="chk"><input type="checkbox" id="extchk" ${showExt?'checked':''}> external</label>`;
   $("#filters").innerHTML=html+`</div>`; bindFilters();
 }
+// dates / Finnish holidays / production periods
+const dateISO=(wk,wd)=>dateOf(semFromWeek(wk),wk,wd);
+function holidayOn(wk,wd){ const iso=dateISO(wk,wd); return iso?(HOLIDAYS[iso]||null):null; }
+function prodPeriodFor(wk){ const mon=dateISO(wk,"Mon"),fri=dateISO(wk,"Fri"); if(!mon)return null;
+  for(const p of (PRODPERIODS||[])){ if(p.start&&p.end&&!(fri<p.start||mon>p.end)) return p; } return null; }
 // one AM (or PM) cell — each week is rendered as TWO table rows (an AM row and a PM
-// row) so the AM band and PM band line up across every day of the week (a day with
-// few courses no longer gets a giant PM block).
+// row) so the AM band and PM band line up across every day of the week.
 function unitCell(evs,cohortName,wk,d,u){
+  const hol=holidayOn(wk,d);
   const inside=evs.filter(e=>e.wd===d&&e.week===wk&&unitsOf(e.slot).includes(u)).map(evChip).join("");
-  return `<td><div class="slot" data-cohort="${esc(cohortName)}" data-week="${wk}" data-wd="${d}" data-unit="${u}">`+
-    `<span class="sl">${u} ${SLOTTIMES[u]||""}</span>`+inside+`</div></td>`;
+  return `<td class="${hol?"holcell":""}"><div class="slot" data-cohort="${esc(cohortName)}" data-week="${wk}" data-wd="${d}" data-unit="${u}"${hol?` title="Public holiday: ${esc(hol)}"`:""}>`+
+    `<span class="sl">${u} ${SLOTTIMES[u]||""}${(hol&&u==="AM")?` · <span class="holtag">🎌 ${esc(hol)}</span>`:""}</span>`+inside+`</div></td>`;
 }
-function wkCell(wk,span){return `<td class="wkcell"${span?' rowspan="2"':''}>W${wk}<br><span class="muted">${semFromWeek(wk).split(" ")[0]}</span></td>`;}
+function wkCell(wk,span){const pp=prodPeriodFor(wk);
+  return `<td class="wkcell${pp?" prodweek":""}"${span?' rowspan="2"':''}${pp?` title="Production period: ${esc(pp.name)}"`:""}>`+
+    `W${wk}<br><span class="muted">${semFromWeek(wk).split(" ")[0]}</span>${pp?`<br><span class="prodlabel">🎬 ${esc(pp.name.slice(0,12))}</span>`:""}</td>`;}
 function buildGrid(evs,cohortName){
   const weeks=[...new Set(evs.map(e=>e.week))].sort((a,b)=>weekKey(a)-weekKey(b));
   if(!weeks.length) return `<p class="muted">No bookings match.</p>`;
@@ -528,6 +582,7 @@ function evChip(e){
   const prog=e.context?`<span class="progtag" title="${esc(e.program)} — context only, not exported">${esc(progShort(e.program))}</span> `:"";
   return `<div class="ev ${e.spec_class} ${cls}" data-id="${e.id}" draggable="true" title="${e.context?esc(e.program)+' (context · not exported) · ':''}drag to move · click for details">`+
     kindBadges(e)+(e.state==="ok"?`<span class="badge okb">OK</span>`:"")+
+    (HOLIDAYS[e.placed_date]?`<span class="badge hol" title="On a public holiday: ${esc(HOLIDAYS[e.placed_date])}">🎌</span>`:"")+
     (e.ai_placed?`<span class="badge ai">AI</span>`:"")+(e.moved?`<span class="badge mv">moved</span>`:"")+
     (e.needs_computer?`<span class="badge cpu">🖥</span>`:"")+
     `<div class="c">${prog}${esc(short(e.course))}</div><div class="t">${esc(e.tlist.map(first).join(", "))}${e.room?" · "+esc(e.room):""}</div></div>`;
@@ -1290,8 +1345,10 @@ async function renderImport(){
             : `<div class="muted" style="color:var(--ok)">✓ no issues</div>`)+
           `</div>`).join("")).join("")+
       `<div class="step">3 · Load into the planner</div>`+
-      `<div class="box"><div class="muted">This replaces the current planner data with these files `+
-        `(approved corrections applied). Conflicts are detected after import — use 🪄 Resolve all, then Export.</div>`+
+      `<div class="box"><div class="row"><b>Academic year</b> <select id="impYear">${yearOpts()}</select>`+
+        ` &nbsp; <b>Programme</b> <select id="impProg">${((SESSION&&SESSION.programmes)||["Media"]).map(p=>`<option ${p===(SESSION&&SESSION.programme)?"selected":""}>${esc(p)}</option>`).join("")}</select></div>`+
+        `<div class="muted">Saved as a session (year + programme) you can switch to later. Re-importing the same year + programme overwrites it.</div>`+
+        `<div class="muted" style="margin-top:4px">Replaces the current planner with these files (approved corrections applied). Conflicts are detected after import — use 🪄 Resolve all, then Export.</div>`+
       `<div class="act"><button class="primary" onclick="impApply()">⬇ Import approved into planner</button></div></div>`;
   }
   $("#view").innerHTML=h+`</div>`;
@@ -1335,7 +1392,9 @@ async function impApply(){
     if(IMPAPP[fi+"|"+ci+"|"+k]==="yes"&&fd.suggested)
       approved.push({file:f.file,sheet:c.sheet,field:fd.field,to:fd.suggested});})));
   toast("Importing into the planner…","ok");
-  const r=await fetch("/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({approved})});
+  const programme=($("#impProg")&&$("#impProg").value)||"Media";
+  const year=($("#impYear")&&$("#impYear").value)||"";
+  const r=await fetch("/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({approved,programme,year})});
   const j=await r.json();
   if(!j.ok){toast("Import failed: "+(j.message||j.error||"error"),"warn");return;}
   // new data => previous planning edits (moved/removed/approved, keyed by booking id)
@@ -1687,6 +1746,14 @@ def generate(bookings_csv=None):
     events, week_dates = build_events(bookings_csv, team=d.teachers)
     schedule(events)
     realized = build_realized(d)
+    # session + holidays + production periods
+    from . import sessions as _sess
+    from .dictionaries import current_academic_year, programs
+    from .holidays import holidays_for_academic_year
+    act = _sess.active()
+    ay = act.get("year") or current_academic_year()
+    session_info = {"programme": act.get("programme") or "Media", "year": ay,
+                    "list": _sess.list_sessions(), "programmes": list(programs().keys())}
     html = (TEMPLATE
             .replace("__DATA__", json.dumps(events, ensure_ascii=False))
             .replace("__WEEKDATES__", json.dumps(week_dates, ensure_ascii=False))
@@ -1695,7 +1762,10 @@ def generate(bookings_csv=None):
             .replace("__SLOTS__", json.dumps(SLOT_TIMES, ensure_ascii=False))
             .replace("__TARGETS__", json.dumps(_load_targets(), ensure_ascii=False))
             .replace("__REALIZED__", json.dumps(realized, ensure_ascii=False))
-            .replace("__RYEARS__", json.dumps(sorted(realized.keys()), ensure_ascii=False)))
+            .replace("__RYEARS__", json.dumps(sorted(realized.keys()), ensure_ascii=False))
+            .replace("__HOLIDAYS__", json.dumps(holidays_for_academic_year(ay), ensure_ascii=False))
+            .replace("__PRODPERIODS__", json.dumps(_sess.meta().get("production_periods", []), ensure_ascii=False))
+            .replace("__SESSION__", json.dumps(session_info, ensure_ascii=False)))
     out_path = os.path.join(OUT, "dashboard.html")
     os.makedirs(OUT, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
