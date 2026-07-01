@@ -31,7 +31,7 @@ for _s in (sys.stdout, sys.stderr):          # be UTF-8 safe however we're launc
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from pipeline import ai_assist, config_store, imports        # noqa: E402
+from pipeline import ai_assist, config_store, imports, sessions  # noqa: E402
 from pipeline.apply_import import run_upload                 # noqa: E402
 from pipeline.dictionaries import APP_DIR, EXPORT_DIR, IMPORT_DIR, INFO, OUTPUT_DIR, data_dir  # noqa: E402
 from pipeline.exporter import export_plan                    # noqa: E402
@@ -116,6 +116,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if route == "/config/rules":
             return self._json(200, {"ok": True, "rules": config_store.get_rules(),
                                     "path": config_store.RULES_FILE})
+        if route == "/sessions":
+            from pipeline.dictionaries import current_academic_year
+            act = sessions.active()
+            base = int((act.get("year") or current_academic_year())[2:4])
+            years = [f"20{y:02d}-20{y + 1:02d}" for y in range(base - 3, base + 2)]
+            return self._json(200, {"ok": True, "active": act, "list": sessions.list_sessions(),
+                                    "years": years, "production_periods": sessions.meta().get("production_periods", [])})
         if route.startswith("/template/"):
             kind = route.rsplit("/", 1)[-1]
             if kind in ("teachers", "courses", "groups"):
@@ -151,7 +158,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if route == "/apply":
                 if not _uploaded():
                     return self._json(200, {"ok": False, "error": "no_files"})
-                return self._json(200, run_upload(UPLOAD_DIR, self._body().get("approved", [])))
+                b = self._body()
+                return self._json(200, run_upload(UPLOAD_DIR, b.get("approved", []),
+                                                  b.get("programme"), b.get("year")))
+
+            if route == "/session/select":
+                b = self._body()
+                sessions.activate(b.get("programme"), b.get("year"))
+                return self._json(200, {"ok": True})
+
+            if route == "/session/periods":
+                res = sessions.set_periods(self._body().get("periods", []))
+                if res.get("ok"):
+                    _rebuild()               # regenerate dashboard so the periods show
+                return self._json(200, res)
 
             if route == "/export":
                 payload = self._body()
